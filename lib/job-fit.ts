@@ -1,10 +1,11 @@
-import type { CandidateProfile } from "@/lib/types";
+import type { CandidateProfile, EligibilityStatus } from "@/lib/types";
 import { normalizeText, parseList } from "@/lib/utils";
 
 export interface JobFitPreferences {
   usaOnly: boolean;
   minimumExperience: number;
   maximumExperience: number;
+  maximumAgeDays: number;
 }
 
 export interface JobEligibilityInput {
@@ -12,6 +13,14 @@ export interface JobEligibilityInput {
   location: string;
   description: string;
   workplaceType: string;
+  postedAt?: string | null;
+  firstSeenAt?: string | null;
+}
+
+export interface JobEligibilityAssessment {
+  status: EligibilityStatus;
+  filterReasons: string[];
+  verificationReasons: string[];
 }
 
 const usStateNames = [
@@ -26,10 +35,50 @@ const usStateNames = [
 ];
 
 const foreignLocationTerms = [
-  "argentina", "australia", "brazil", "canada", "chile", "colombia", "europe", "germany",
-  "india", "ireland", "latam", "latin america", "mexico", "philippines", "portugal",
-  "spain", "united kingdom", "uk", "worldwide",
+  "argentina", "australia", "austria", "belgium", "brazil", "bulgaria", "canada",
+  "chile", "china", "colombia", "croatia", "cyprus", "czech republic", "denmark",
+  "egypt", "estonia", "europe", "finland", "france", "germany", "greece", "hong kong",
+  "hungary", "india", "indonesia", "ireland", "israel", "italy", "japan", "kenya",
+  "latam", "latin america", "lithuania", "luxembourg", "malaysia", "mexico",
+  "netherlands", "new zealand", "nigeria", "norway", "pakistan", "peru", "philippines",
+  "poland", "portugal", "romania", "russia", "saudi arabia", "serbia", "singapore",
+  "slovakia", "slovenia", "south africa", "south korea", "korea", "spain", "sweden",
+  "switzerland", "taiwan", "thailand", "turkey", "ukraine", "united arab emirates",
+  "united kingdom", "uk", "vietnam",
 ];
+
+const productDesignerPattern = /\bproduct designer\b/i;
+const uiUxDesignerPattern = /\b(?:ui\s*\/?\s*ux|ux\s*\/?\s*ui) designer\b/i;
+const designEngineerPattern = /\bdesign engineer\b/i;
+const hardwareDesignTitlePattern = /\b(?:mechanical|electrical|electronics|hardware|civil|structural|manufacturing|aerospace|automotive|semiconductor|silicon|pcb|hvac)\b/i;
+const hardwareDesignDescriptionPattern = /\b(?:mechanical (?:architecture|design|engineering)|electrical engineering|circuit design|printed circuit|pcb|solidworks|autocad|catia|creo|pro\/?e|siemens nx|3d cad|cad drawings?|gd&t|geometric dimensioning|finite element|fea|manufacturing process|design for manufacturability|dfm|design for assembly|dfa|injection mold(?:ing)?|cnc|tooling|tolerance analysis|thermodynamics|mechanisms?|enclosure design|industrial design|consumer electronics|mass production|semiconductor|silicon validation|hvac)\b/i;
+const digitalDesignDescriptionPattern = /\b(?:user experience|user interface|ux|ui|figma|frontend|front-end|react|typescript|javascript|design systems?|web applications?|mobile applications?|interaction design|accessible interfaces?)\b/i;
+
+export const adjacentJobTitles = [
+  "Product Designer",
+  "UI/UX Designer",
+  "Design Engineer",
+];
+
+export function jobSearchTitles(profile: CandidateProfile): string[] {
+  void profile;
+  return adjacentJobTitles;
+}
+
+export function broadDiscoverySearchTitles(profile: CandidateProfile): string[] {
+  const ambiguousEngineeringTitles = new Set(["design engineer", "product design engineer"]);
+  return jobSearchTitles(profile).filter((title) => !ambiguousEngineeringTitles.has(normalizeText(title)));
+}
+
+export function isProductDesignRoleFamily(title: string, description = ""): boolean {
+  if (productDesignerPattern.test(title) || uiUxDesignerPattern.test(title)) return true;
+  if (!designEngineerPattern.test(title) || hardwareDesignTitlePattern.test(title)) return false;
+  if (!description.trim()) return false;
+  return digitalDesignDescriptionPattern.test(description) && !hardwareDesignDescriptionPattern.test(description);
+}
+
+const excludedLeadershipPattern = /\b(?:staff|principal|lead|manager|director|head|vice president|vp)\b/i;
+const seniorPattern = /\b(?:senior|sr\.?)\b/i;
 
 function titleTokens(value: string): Set<string> {
   return new Set(normalizeText(value)
@@ -92,38 +141,94 @@ export function isUnitedStatesEligible(job: JobEligibilityInput, profile: Candid
   return /\b(?:remote within (?:the )?united states|united states only|us-based|u\.s\.-based|based in (?:the )?u\.s\.|remote us|remote u\.s\.)\b/i.test(descriptionLocation);
 }
 
+function isExplicitlyForeign(job: JobEligibilityInput): boolean {
+  const location = normalizeText(job.location);
+  const description = normalizeText(job.description.slice(0, 2_000));
+  const explicitDescriptionLocation = description.match(
+    /\b(?:based in|located in|remote from|candidates in|applicants in)\s+([a-z ]{2,40})/,
+  )?.[1] || "";
+  const locationEvidence = `${location} ${explicitDescriptionLocation}`;
+  const hasForeignTerm = foreignLocationTerms.some((term) => (
+    new RegExp(`(?:^|\\s|,)${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|\\s|,)`, "i").test(locationEvidence)
+  ));
+  const hasUsTerm = /\b(?:united states|usa|u s|us based|remote us)\b/i.test(locationEvidence)
+    || usStateNames.some((state) => locationEvidence.includes(state));
+  return hasForeignTerm && !hasUsTerm;
+}
+
+function ageInDays(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  return Math.max(0, Math.floor((Date.now() - timestamp) / 86_400_000));
+}
+
+export function assessJobEligibility(
+  job: JobEligibilityInput,
+  profile: CandidateProfile,
+  preferences: JobFitPreferences,
+): JobEligibilityAssessment {
+  const filterReasons: string[] = [];
+  const verificationReasons: string[] = [];
+  const allowedTargetRole = isProductDesignRoleFamily(job.title, job.description);
+  if (excludedLeadershipPattern.test(job.title)) {
+    filterReasons.push("The title is a Lead, Staff, Principal, Manager, Director, or executive role.");
+  } else if (!allowedTargetRole) {
+    filterReasons.push("The title is not Product Designer, UI/UX Designer, or a digital Design Engineer role.");
+  }
+
+  const earlyCareerTitle = /\b(?:intern|internship|new grad)\b/i.test(job.title);
+  if (preferences.minimumExperience >= 2 && earlyCareerTitle) {
+    filterReasons.push("The role is an internship or new graduate position.");
+  }
+
+  const requiredExperience = inferRequiredExperience(job.description);
+  if (requiredExperience.minimum !== null && requiredExperience.minimum > preferences.maximumExperience) {
+    filterReasons.push(`The role asks for at least ${requiredExperience.minimum} years of experience.`);
+  }
+  if (requiredExperience.maximum !== null && requiredExperience.maximum < preferences.minimumExperience) {
+    filterReasons.push(`The role targets no more than ${requiredExperience.maximum} years of experience.`);
+  }
+  if (
+    seniorPattern.test(job.title)
+    && requiredExperience.minimum === null
+    && requiredExperience.maximum === null
+    && !excludedLeadershipPattern.test(job.title)
+  ) {
+    verificationReasons.push("Senior title needs an experience check because the posting does not state a clear years requirement.");
+  }
+
+  if (preferences.usaOnly) {
+    if (isExplicitlyForeign(job)) {
+      filterReasons.push("The posting explicitly places the role outside the United States.");
+    } else if (!isUnitedStatesEligible(job, profile)) {
+      verificationReasons.push("The posting does not clearly confirm United States eligibility.");
+    }
+  }
+
+  const postingAge = ageInDays(job.postedAt || job.firstSeenAt);
+  if (postingAge !== null && postingAge > preferences.maximumAgeDays) {
+    filterReasons.push(`The posting is ${postingAge} days old, beyond the ${preferences.maximumAgeDays}-day limit.`);
+  }
+
+  if (
+    profile.sponsorship_required
+    && /(no sponsorship|unable to sponsor|cannot sponsor|without sponsorship|not sponsor)/i.test(job.description)
+  ) {
+    filterReasons.push("The posting says sponsorship is unavailable.");
+  }
+
+  return {
+    status: filterReasons.length ? "filtered" : verificationReasons.length ? "needs_verification" : "eligible",
+    filterReasons,
+    verificationReasons,
+  };
+}
+
 export function jobEligibilityReasons(
   job: JobEligibilityInput,
   profile: CandidateProfile,
   preferences: JobFitPreferences,
 ): string[] {
-  const reasons: string[] = [];
-  const targetTitles = parseList(profile.target_titles);
-  const bestTitleMatch = targetTitles.length
-    ? Math.max(...targetTitles.map((title) => titleMatchRatio(job.title, title)))
-    : 1;
-  if (bestTitleMatch < 0.75) {
-    reasons.push("The role title does not match the target role family.");
-  }
-
-  const requestedSeniority = normalizeText(profile.target_seniority);
-  const rejectsSeniorRoles = !requestedSeniority || /\b(?:intern|junior|entry|associate|mid)\b/.test(requestedSeniority);
-  const seniorTitle = /\b(?:senior|sr\.?|staff|principal|lead|manager|director|head|vice president|vp)\b/i.test(job.title);
-  const earlyCareerTitle = /\b(?:intern|internship|new grad)\b/i.test(job.title);
-  if ((rejectsSeniorRoles && seniorTitle) || (preferences.minimumExperience >= 2 && earlyCareerTitle)) {
-    reasons.push("The role seniority is outside the selected individual-contributor range.");
-  }
-
-  const requiredExperience = inferRequiredExperience(job.description);
-  if (requiredExperience.minimum !== null && requiredExperience.minimum > preferences.maximumExperience) {
-    reasons.push(`The role asks for at least ${requiredExperience.minimum} years of experience.`);
-  }
-  if (requiredExperience.maximum !== null && requiredExperience.maximum < preferences.minimumExperience) {
-    reasons.push(`The role targets no more than ${requiredExperience.maximum} years of experience.`);
-  }
-
-  if (preferences.usaOnly && !isUnitedStatesEligible(job, profile)) {
-    reasons.push("The role is not explicitly located in or restricted to the United States.");
-  }
-  return reasons;
+  return assessJobEligibility(job, profile, preferences).filterReasons;
 }

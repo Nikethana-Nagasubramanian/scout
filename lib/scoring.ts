@@ -1,8 +1,40 @@
 import type { CandidateProfile, ConfidenceBreakdown, Job, ScoreBreakdown } from "@/lib/types";
-import { isUnitedStatesEligible, jobEligibilityReasons, titleMatchRatio, type JobFitPreferences } from "@/lib/job-fit";
+import { assessJobEligibility, isUnitedStatesEligible, titleMatchRatio, type JobFitPreferences } from "@/lib/job-fit";
 import { normalizeText, parseList } from "@/lib/utils";
 
 const seniorityTerms = ["intern", "junior", "associate", "mid", "senior", "staff", "principal", "lead", "manager", "director"];
+
+const requirementCatalog: Array<{ label: string; aliases: string[] }> = [
+  { label: "Figma", aliases: ["figma"] },
+  { label: "Prototyping", aliases: ["prototyping", "prototype", "prototypes", "protopie", "framer"] },
+  { label: "User research", aliases: ["user research", "ux research", "customer research", "qualitative research"] },
+  { label: "Usability testing", aliases: ["usability testing", "usability tests", "user testing"] },
+  { label: "Design systems", aliases: ["design system", "design systems", "component library", "component libraries"] },
+  { label: "Interaction design", aliases: ["interaction design", "interaction designer"] },
+  { label: "Visual design", aliases: ["visual design", "visual designer", "visual craft"] },
+  { label: "Product design", aliases: ["product design", "product designer"] },
+  { label: "UI/UX design", aliases: ["ui ux", "ui/ux", "user interface design", "user experience design"] },
+  { label: "Accessibility", aliases: ["accessibility", "accessible design", "wcag"] },
+  { label: "Information architecture", aliases: ["information architecture"] },
+  { label: "Product strategy", aliases: ["product strategy", "design strategy", "strategic design"] },
+  { label: "Cross-functional collaboration", aliases: ["cross functional", "cross-functional", "collaboration", "collaborate"] },
+  { label: "Stakeholder management", aliases: ["stakeholder management", "stakeholder communication", "stakeholders"] },
+  { label: "Leadership", aliases: ["leadership", "led", "leading", "mentor", "mentoring"] },
+  { label: "Data and analytics", aliases: ["data analysis", "analytics", "data informed", "data driven", "metrics"] },
+  { label: "B2B", aliases: ["b2b", "b2b2c", "business to business"] },
+  { label: "B2C", aliases: ["b2c", "b2b2c", "consumer product", "consumer products"] },
+  { label: "Enterprise", aliases: ["enterprise", "enterprise software", "enterprise product"] },
+  { label: "SaaS", aliases: ["saas", "software as a service"] },
+  { label: "AI/ML", aliases: ["artificial intelligence", "machine learning", "ai product", "ai powered", "generative ai"] },
+  { label: "React", aliases: ["react", "reactjs", "react.js"] },
+  { label: "TypeScript", aliases: ["typescript"] },
+  { label: "JavaScript", aliases: ["javascript"] },
+  { label: "HTML/CSS", aliases: ["html css", "html/css", "html", "css"] },
+  { label: "Frontend development", aliases: ["frontend", "front end", "front-end"] },
+  { label: "Mobile design", aliases: ["mobile design", "mobile product", "ios", "android"] },
+  { label: "Facilitation", aliases: ["facilitation", "facilitate", "workshop", "workshops"] },
+  { label: "Agile", aliases: ["agile", "scrum"] },
+];
 
 function tokenSet(value: string): Set<string> {
   return new Set(normalizeText(value).split(" ").filter((token) => token.length > 1));
@@ -21,8 +53,47 @@ function containsPhrase(text: string, phrase: string): boolean {
   return normalizeText(text).includes(normalizeText(phrase));
 }
 
+function containsWholePhrase(text: string, phrase: string): boolean {
+  const normalizedPhrase = normalizeText(phrase);
+  return Boolean(normalizedPhrase) && ` ${normalizeText(text)} `.includes(` ${normalizedPhrase} `);
+}
+
+function requirementCoverage(job: Job, profile: CandidateProfile, profileSkills: string[]): {
+  score: number;
+  matched: string[];
+  missing: string[];
+} {
+  const jobText = job.description;
+  const candidateEvidence = [profile.professional_summary, profile.base_resume_text, ...profileSkills].join(" ");
+  const requirements = requirementCatalog.filter((requirement) => (
+    requirement.aliases.some((alias) => containsWholePhrase(jobText, alias))
+  ));
+  const catalogLabels = new Set(requirements.map((requirement) => normalizeText(requirement.label)));
+
+  for (const skill of profileSkills) {
+    if (!containsWholePhrase(jobText, skill) || catalogLabels.has(normalizeText(skill))) continue;
+    requirements.push({ label: skill, aliases: [skill] });
+    catalogLabels.add(normalizeText(skill));
+  }
+
+  if (!requirements.length) return { score: 18, matched: [], missing: [] };
+
+  const matched = requirements
+    .filter((requirement) => requirement.aliases.some((alias) => containsWholePhrase(candidateEvidence, alias)))
+    .map((requirement) => requirement.label);
+  const matchedKeys = new Set(matched.map(normalizeText));
+  const missing = requirements
+    .map((requirement) => requirement.label)
+    .filter((requirement) => !matchedKeys.has(normalizeText(requirement)));
+
+  return {
+    score: Math.round((matched.length / requirements.length) * 35),
+    matched,
+    missing,
+  };
+}
+
 export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: JobFitPreferences): ScoreBreakdown {
-  const description = normalizeText(`${job.title} ${job.description}`);
   const titles = parseList(profile.target_titles);
   const skills = parseList(profile.skills);
   const locations = parseList(profile.preferred_locations);
@@ -32,20 +103,17 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
     usaOnly: false,
     minimumExperience: 0,
     maximumExperience: 50,
+    maximumAgeDays: 60,
   };
-  hardFilterReasons.push(...jobEligibilityReasons({
+  const eligibility = assessJobEligibility({
     title: job.title,
     location: job.location,
     description: job.description,
     workplaceType: job.workplace_type,
-  }, profile, preferences));
-
-  if (
-    profile.sponsorship_required &&
-    /(no sponsorship|unable to sponsor|cannot sponsor|without sponsorship|not sponsor)/i.test(job.description)
-  ) {
-    hardFilterReasons.push("The posting says sponsorship is unavailable.");
-  }
+    postedAt: job.posted_at,
+    firstSeenAt: job.first_seen_at,
+  }, profile, preferences);
+  hardFilterReasons.push(...eligibility.filterReasons);
 
   const preferredRemote = workplaces.some((item) => item.toLowerCase() === "remote");
   const nationwidePreference = locations.some((location) => ["united states", "usa", "us"].includes(normalizeText(location)));
@@ -57,18 +125,15 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
   }, profile);
   const locationMatches = nationwideLocationMatch || locations.some((location) => containsPhrase(job.location, location));
   const jobIsRemote = containsPhrase(`${job.location} ${job.workplace_type}`, "remote");
-  if (locations.length && !locationMatches && !(preferredRemote && jobIsRemote)) {
-    hardFilterReasons.push("The location does not match the current preferences.");
-  }
-
   const titleSimilarity = titles.length
     ? Math.max(...titles.map((title) => Math.max(overlapScore(title, job.title), titleMatchRatio(job.title, title))))
     : 0;
   const title = Math.round(titleSimilarity * 25);
 
-  const matchingSkills = skills.filter((skill) => containsPhrase(description, skill));
-  const missingSkills = skills.filter((skill) => !matchingSkills.includes(skill));
-  const skillsScore = skills.length ? Math.round((matchingSkills.length / skills.length) * 35) : 0;
+  const requirements = requirementCoverage(job, profile, skills);
+  const matchingSkills = requirements.matched;
+  const missingSkills = requirements.missing;
+  const skillsScore = requirements.score;
 
   const experienceSeniority = profile.years_experience === null
     ? ""
@@ -114,8 +179,10 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
     recency,
     compensation,
     total,
+    eligibilityStatus: eligibility.status,
     hardFilterPass: hardFilterReasons.length === 0,
     hardFilterReasons,
+    verificationReasons: eligibility.verificationReasons,
     matchingSkills,
     missingSkills,
   };
@@ -123,9 +190,15 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
 
 export function buildMatchSummary(score: ScoreBreakdown): string {
   if (!score.hardFilterPass) return score.hardFilterReasons.join(" ");
-  if (score.total >= 80) return `Strong match with ${score.matchingSkills.length} profile skills found in the posting.`;
-  if (score.total >= 65) return `Promising match. Review ${score.missingSkills.length} profile skills that were not found in the posting.`;
-  return "Possible match, but title or skill alignment is limited.";
+  if (score.eligibilityStatus === "needs_verification") {
+    return `Needs verification. ${score.verificationReasons.join(" ")}`;
+  }
+  if (!score.matchingSkills.length && !score.missingSkills.length) {
+    return "The posting has too little specific requirement data for a strong coverage assessment.";
+  }
+  if (score.total >= 80) return `Strong profile match with evidence for ${score.matchingSkills.length} detected job requirements.`;
+  if (score.total >= 65) return `Promising profile match. Review ${score.missingSkills.length} detected requirements without clear resume evidence.`;
+  return "Possible profile match, but title or requirement coverage is limited.";
 }
 
 function ageInDays(value: string | null | undefined): number | null {
@@ -138,8 +211,11 @@ function ageInDays(value: string | null | undefined): number | null {
 export function scorePostingConfidence(job: Job, recentCompanyJobCount: number, similarRoleCount = 1): ConfidenceBreakdown {
   const positiveSignals: string[] = [];
   const cautionSignals: string[] = [];
-  const officialSource = job.source_type === "greenhouse" || job.source_type === "lever";
-  const discoveryFeed = job.source_type === "remotive" || job.source_type === "jobicy" || job.source_type === "himalayas";
+  const officialSource = job.source_type === "greenhouse" || job.source_type === "lever" || job.source_type === "ashby";
+  const discoveryFeed = job.source_type === "remotive"
+    || job.source_type === "jobicy"
+    || job.source_type === "himalayas"
+    || job.source_type === "hiring_cafe";
   const sourceIntegrity = officialSource ? 15 : discoveryFeed ? 11 : 7;
   if (officialSource) positiveSignals.push("Collected from the company's public ATS feed.");
   else if (discoveryFeed) positiveSignals.push("Collected from a public job discovery feed with a direct application link.");
@@ -217,6 +293,6 @@ export function scorePostingConfidence(job: Job, recentCompanyJobCount: number, 
 }
 
 export function buildConfidenceSummary(confidence: ConfidenceBreakdown): string {
-  const label = confidence.total >= 75 ? "Higher confidence" : confidence.total >= 55 ? "Mixed confidence" : "Lower confidence";
+  const label = confidence.total >= 75 ? "Higher posting signal" : confidence.total >= 55 ? "Mixed posting signal" : "Lower posting signal";
   return `${label} based on ${confidence.dataSufficiency} local data sufficiency. This is a supporting signal, not proof that a role is active.`;
 }

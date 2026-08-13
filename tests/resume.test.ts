@@ -1,9 +1,9 @@
 import { inflateRawSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildResumeContent, generateDocx, generatePdf, parseResumeSections } from "@/lib/resume";
 import { addResumeKeyword, isHighlightedKeyword } from "@/lib/resume-keywords";
 import { categorizeResumeSkills, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
-import { applyResumeRanking } from "@/lib/local-ai";
+import { applyResumeRanking, suggestResumeBulletWithOllama } from "@/lib/local-ai";
 import type { CandidateFact, CandidateProfile, Job } from "@/lib/types";
 
 function readZipEntry(archive: Buffer, target: string): string {
@@ -103,18 +103,25 @@ const job = {
   status: "discovered",
   score: 80,
   hard_filter_pass: 1,
+  eligibility_status: "eligible",
   score_breakdown: null,
   match_summary: null,
   seen_count: 1,
   confidence_score: null,
   confidence_breakdown: null,
   confidence_summary: null,
+  duplicate_of_job_id: null,
+  duplicate_reason: "",
 } satisfies Job;
 
 const facts: CandidateFact[] = [
   { id: 1, category: "Experience", context: "Verified job", claim: "Built a Figma component library.", skills: JSON.stringify(["Figma"]), verified: 1, created_at: "2026-01-01" },
   { id: 2, category: "Experience", context: "Unverified job", claim: "Claim that must not appear.", skills: "[]", verified: 0, created_at: "2026-01-01" },
 ];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("buildResumeContent", () => {
   it("uses verified facts and excludes unsupported claims", () => {
@@ -169,6 +176,78 @@ describe("buildResumeContent", () => {
     const updated = applyResumeRanking(original, { skillOrder: ["Research", "Figma"] });
     expect(updated.skills.slice(0, 2)).toEqual(["Research", "Figma"]);
     expect(updated.sections).toEqual(original.sections);
+  });
+
+  it("returns an evidence-bound bullet rewrite without changing numeric claims", async () => {
+    const content = buildResumeContent(job, {
+      ...profile,
+      base_resume_text: [
+        "EXPERIENCE",
+        "Product Designer | Example | 2022 - Present",
+        "• Led cross-functional design reviews that increased completion by 48%.",
+      ].join("\n"),
+    }, []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      response: JSON.stringify({
+        supported: true,
+        candidateId: "section-0-line-1",
+        suggestedBullet: "Demonstrated leadership through cross-functional design reviews that increased completion by 48%.",
+        reason: "The original bullet already shows leadership through leading cross-functional reviews.",
+      }),
+    }), { status: 200 })));
+
+    const suggestion = await suggestResumeBulletWithOllama(content, job, "leadership", "test-model");
+    expect(suggestion.supported).toBe(true);
+    expect(suggestion.originalBullet).toContain("48%");
+    expect(suggestion.suggestedBullet).toContain("leadership");
+    expect(suggestion.suggestedBullet).toContain("48%");
+  });
+
+  it("rewrites the summary using a candidate-confirmed truth note", async () => {
+    const content = buildResumeContent(job, profile, []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      response: JSON.stringify({
+        supported: true,
+        candidateId: "summary",
+        suggestedBullet: "Product Designer building trust-critical B2B and enterprise products at high-growth startups.",
+        reason: "The candidate confirmed that the products served B2B2C customers.",
+      }),
+    }), { status: 200 })));
+
+    const suggestion = await suggestResumeBulletWithOllama(
+      content,
+      job,
+      "enterprise",
+      "test-model",
+      { kind: "summary" },
+      "My last two products served B2B2C customers.",
+    );
+    expect(suggestion.supported).toBe(true);
+    expect(suggestion.targetKind).toBe("summary");
+    expect(suggestion.sectionTitle).toBe("SUMMARY");
+    expect(suggestion.suggestedBullet).toContain("enterprise");
+  });
+
+  it("blocks a suggested rewrite that invents a new metric", async () => {
+    const content = buildResumeContent(job, {
+      ...profile,
+      base_resume_text: [
+        "EXPERIENCE",
+        "Product Designer | Example | 2022 - Present",
+        "• Led design reviews that increased completion by 48%.",
+      ].join("\n"),
+    }, []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      response: JSON.stringify({
+        supported: true,
+        candidateId: "section-0-line-1",
+        suggestedBullet: "Demonstrated leadership through design reviews that increased completion by 72%.",
+        reason: "Reframed the existing work.",
+      }),
+    }), { status: 200 })));
+
+    await expect(suggestResumeBulletWithOllama(content, job, "leadership", "test-model"))
+      .rejects.toThrow("changed a numeric claim");
   });
 
   it("splits legacy category text and places job-description skills first", () => {

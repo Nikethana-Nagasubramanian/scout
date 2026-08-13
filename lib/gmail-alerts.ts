@@ -4,13 +4,13 @@ import { simpleParser } from "mailparser";
 import { db } from "@/lib/database";
 import { stripHtml } from "@/lib/utils";
 
-const PARSER_VERSION = 5;
+const PARSER_VERSION = 6;
 const MAX_MESSAGES_PER_RUN = 50;
 
 export interface GmailAlertJob {
   externalId: string;
   sourceName: string;
-  sourceType: "gmail_indeed" | "gmail_builtin" | "gmail_alert";
+  sourceType: "gmail_indeed" | "gmail_builtin" | "gmail_newsletter" | "gmail_alert";
   company: string;
   title: string;
   location: string;
@@ -25,6 +25,17 @@ export interface GmailAlertJob {
   postedAt: string | null;
 }
 
+export interface GmailHiringSignal {
+  externalId: string;
+  sourceName: string;
+  company: string;
+  roleHint: string;
+  location: string;
+  signalText: string;
+  url: string;
+  signalType: "explicit_role" | "company_hiring";
+}
+
 export interface GmailProcessedMessage {
   uid: number;
   messageIdHash: string;
@@ -33,6 +44,7 @@ export interface GmailProcessedMessage {
 
 export interface GmailAlertFetchResult {
   jobs: GmailAlertJob[];
+  hiringSignals: GmailHiringSignal[];
   messagesAvailable: number;
   messagesProcessed: number;
   messagesSkipped: number;
@@ -297,7 +309,172 @@ function inferSource(input: ParsedAlertInput, url: string): Pick<GmailAlertJob, 
   const evidence = `${input.from} ${input.subject} ${url}`.toLowerCase();
   if (evidence.includes("indeed")) return { sourceName: "Indeed email alert", sourceType: "gmail_indeed" };
   if (evidence.includes("builtin")) return { sourceName: "BuiltIn email alert", sourceType: "gmail_builtin" };
+  if (isHiringNewsletter(input)) return { sourceName: newsletterSourceName(input), sourceType: "gmail_newsletter" };
   return { sourceName: "Gmail job alert", sourceType: "gmail_alert" };
+}
+
+function isHiringNewsletter(input: ParsedAlertInput): boolean {
+  const evidence = `${input.from} ${input.subject} ${input.html.slice(0, 4_000)}`.toLowerCase();
+  return evidence.includes("substack")
+    || evidence.includes("a16z build")
+    || evidence.includes("a16zbuild")
+    || /\bopen roles? with founders?\b/.test(evidence);
+}
+
+function newsletterSourceName(input: ParsedAlertInput): string {
+  const evidence = `${input.from} ${input.subject}`.toLowerCase();
+  if (evidence.includes("a16z") || evidence.includes("build")) return "a16z Build newsletter";
+  const sender = input.from.replace(/<[^>]+>/g, "").trim();
+  return sender ? `${sender} newsletter` : "Curated hiring newsletter";
+}
+
+function enclosingContentBlock(html: string, anchor: EmailAnchor): string {
+  const blocks: Array<{ index: number; endIndex: number; html: string }> = [];
+  const pattern = /<(p|li|tr|div)\b[^>]*>[\s\S]*?<\/\1>/gi;
+  for (const match of html.matchAll(pattern)) {
+    if (match.index === undefined) continue;
+    const endIndex = match.index + match[0].length;
+    if (match.index <= anchor.index && endIndex >= anchor.endIndex) {
+      blocks.push({ index: match.index, endIndex, html: match[0] });
+    }
+  }
+  blocks.sort((left, right) => (left.endIndex - left.index) - (right.endIndex - right.index));
+  return blocks[0]?.html || html.slice(Math.max(0, anchor.index - 1_500), anchor.endIndex + 1_500);
+}
+
+function newsletterRoleHint(text: string): string {
+  const patterns = [
+    /\b(?:senior|staff|principal|lead|founding|forward deployed|associate|junior|mid-level|mid level)?\s*(?:product|ux|ui|ui\/ux|interaction|visual|brand|design systems?)\s+designer\b/i,
+    /\b(?:senior|staff|principal|lead|founding|associate|junior|mid-level|mid level)?\s*design engineer\b/i,
+    /\b(?:senior|staff|principal|lead|founding|forward deployed|associate|junior|mid-level|mid level)\s+designer\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern)?.[0].replace(/\s+/g, " ").trim();
+    if (match) return match.replace(/^\w/, (letter) => letter.toUpperCase());
+  }
+  return "";
+}
+
+function readableCompanySlug(value: string): string {
+  return decodeURIComponent(value)
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim();
+}
+
+function companyFromHiringUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (["jobs.ashbyhq.com", "jobs.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io"].includes(host)) {
+      return readableCompanySlug(parts[0] || "");
+    }
+    const hostParts = host.split(".");
+    const root = hostParts.length > 2 && ["jobs", "careers"].includes(hostParts[0]) ? hostParts[1] : hostParts[0];
+    return readableCompanySlug(root || "");
+  } catch {
+    return "";
+  }
+}
+
+function newsletterCompany(blockHtml: string, text: string, roleHint: string, url: string): string {
+  const emphasized = [...blockHtml.matchAll(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi)]
+    .map((match) => cleanInlineText(match[1]))
+    .find((value) => value
+      && value.length <= 80
+      && value.toLowerCase() !== roleHint.toLowerCase()
+      && !/^(?:build|apply|role|location|about|open roles?)\b/i.test(value));
+  const cleanedEmphasis = emphasized?.replace(/[,:.]+$/, "").replace(/\s+just$/i, "").trim() || "";
+  const urlCompany = companyFromHiringUrl(url);
+  if (cleanedEmphasis && urlCompany) {
+    const normalizedEmphasis = cleanedEmphasis.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normalizedUrlCompany = urlCompany.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalizedEmphasis.includes(normalizedUrlCompany) || normalizedUrlCompany.includes(normalizedEmphasis)) {
+      return cleanedEmphasis;
+    }
+    return urlCompany;
+  }
+  if (cleanedEmphasis) return cleanedEmphasis;
+  if (urlCompany) return urlCompany;
+
+  const leading = text.match(/^(?:at\s+)?([A-Z][A-Za-z0-9&.' -]{1,70}?)(?:\s+is\s+|\s+has\s+|\s+was\s+|\s+raised\s+|\s+is hiring\b|,)/)?.[1];
+  return leading?.trim() || "Company not listed";
+}
+
+function newsletterLinkCandidate(anchor: EmailAnchor): boolean {
+  const label = anchor.text.toLowerCase();
+  if (/\b(?:apply|open roles?|view roles?|view jobs?|careers?|jobs?)\b/.test(label)) return true;
+  try {
+    const url = new URL(anchor.href);
+    const host = url.hostname.toLowerCase();
+    return host === "jobs.ashbyhq.com"
+      || host.includes("greenhouse.io")
+      || host === "jobs.lever.co"
+      || /\b(?:jobs?|careers?|openings?|positions?)\b/i.test(`${host}${url.pathname}`);
+  } catch {
+    return false;
+  }
+}
+
+export function parseHiringNewsletterSignals(input: ParsedAlertInput): GmailHiringSignal[] {
+  if (!isHiringNewsletter(input)) return [];
+  const sourceName = newsletterSourceName(input);
+  const signals = extractAnchors(input.html || "").flatMap((rawAnchor) => {
+    const url = canonicalizeJobUrl(rawAnchor.href);
+    if (!url) return [];
+    const anchor = { ...rawAnchor, href: url };
+    if (!newsletterLinkCandidate(anchor)) return [];
+    const blockHtml = enclosingContentBlock(input.html || "", anchor);
+    const signalText = cleanInlineText(blockHtml).slice(0, 2_000);
+    if (!signalText || /\b(?:unsubscribe|privacy|manage preferences|share this post)\b/i.test(signalText)) return [];
+    const roleHint = newsletterRoleHint(signalText);
+    const company = newsletterCompany(blockHtml, signalText, roleHint, url);
+    if (company === "Company not listed") return [];
+    const location = extractLocation(htmlToLines(blockHtml));
+    const externalId = createHash("sha256")
+      .update(`${sourceName}:${company}:${roleHint}:${url}`)
+      .digest("hex")
+      .slice(0, 24);
+    return [{
+      externalId,
+      sourceName,
+      company,
+      roleHint,
+      location,
+      signalText,
+      url,
+      signalType: roleHint ? "explicit_role" as const : "company_hiring" as const,
+    }];
+  });
+  return [...new Map(signals.map((signal) => [signal.externalId, signal])).values()];
+}
+
+function jobFromHiringSignal(input: ParsedAlertInput, signal: GmailHiringSignal): GmailAlertJob | null {
+  if (!signal.roleHint) return null;
+  const salary = extractSalary(signal.signalText);
+  const workplaceType = /\bremote\b/i.test(signal.signalText)
+    ? "remote"
+    : /\bhybrid\b/i.test(signal.signalText)
+      ? "hybrid"
+      : "unspecified";
+  return {
+    externalId: signal.externalId,
+    sourceName: signal.sourceName,
+    sourceType: "gmail_newsletter",
+    company: signal.company,
+    title: signal.roleHint,
+    location: signal.location,
+    workplaceType,
+    employmentType: /\bcontract\b/i.test(signal.signalText) ? "Contract" : "",
+    salaryMin: salary.minimum,
+    salaryMax: salary.maximum,
+    salaryCurrency: salary.minimum !== null ? "USD" : "",
+    description: signal.signalText,
+    canonicalUrl: signal.url,
+    applyUrl: signal.url,
+    postedAt: input.date?.toISOString() || null,
+  };
 }
 
 function buildJob(
@@ -349,6 +526,11 @@ function buildJob(
 }
 
 export function parseJobAlertEmail(input: ParsedAlertInput): GmailAlertJob[] {
+  if (isHiringNewsletter(input)) {
+    return parseHiringNewsletterSignals(input)
+      .map((signal) => jobFromHiringSignal(input, signal))
+      .filter((job): job is GmailAlertJob => job !== null);
+  }
   const html = input.html || "";
   const anchors = extractAnchors(html)
     .map((anchor) => ({ ...anchor, href: canonicalizeJobUrl(anchor.href) || anchor.href }))
@@ -418,6 +600,7 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
     if (!pendingUids.length) {
       return {
         jobs: [],
+        hiringSignals: [],
         messagesAvailable: availableUids.length,
         messagesProcessed: 0,
         messagesSkipped: availableUids.length,
@@ -427,6 +610,7 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
     }
 
     const jobs: GmailAlertJob[] = [];
+    const hiringSignals: GmailHiringSignal[] = [];
     const processedMessages: GmailProcessedMessage[] = [];
     for await (const message of client.fetch(pendingUids, { uid: true, source: true }, { uid: true })) {
       if (!message.source) continue;
@@ -438,7 +622,15 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
         from: parsed.from?.text || "",
         date: parsed.date || null,
       });
+      const parsedSignals = parseHiringNewsletterSignals({
+        html: typeof parsed.html === "string" ? parsed.html : "",
+        text: parsed.text || "",
+        subject: parsed.subject || "",
+        from: parsed.from?.text || "",
+        date: parsed.date || null,
+      });
       jobs.push(...parsedJobs);
+      hiringSignals.push(...parsedSignals);
       processedMessages.push({
         uid: message.uid,
         messageIdHash: createHash("sha256").update(parsed.messageId || `${configuration.label}:${message.uid}`).digest("hex"),
@@ -448,6 +640,7 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
 
     return {
       jobs: [...new Map(jobs.map((job) => [`${job.sourceType}:${job.externalId}`, job])).values()],
+      hiringSignals: [...new Map(hiringSignals.map((signal) => [signal.externalId, signal])).values()],
       messagesAvailable: availableUids.length,
       messagesProcessed: processedMessages.length,
       messagesSkipped: availableUids.length - processedMessages.length,

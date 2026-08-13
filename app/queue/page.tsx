@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createApplicationAction, generateResumeAction, updateJobStatusAction, updateResumeStatusAction } from "@/app/actions";
 import { ConfidenceBadge, EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
+import { CoverLetterEditor } from "@/components/CoverLetterEditor";
 import { db, getSetting } from "@/lib/database";
 import { partitionResumeQueue } from "@/lib/resume-queue";
 import { resumeSkillCategories } from "@/lib/resume-skills";
@@ -23,6 +24,11 @@ interface ResumeRow {
   apply_url: string;
   description: string;
   application_status: string | null;
+  application_id: number | null;
+  cover_letter_content: string | null;
+  cover_letter_method: string | null;
+  cover_letter_status: string | null;
+  cover_letter_candidate_note: string | null;
   is_latest: number;
 }
 
@@ -68,13 +74,23 @@ function ResumeVersionCard({ resume, isLatest, openByDefault = isLatest }: { res
             </div>
           </div>
         ) : null}
+        {isLatest && resume.status === "approved" && resume.application_id ? (
+          <CoverLetterEditor
+            applicationId={resume.application_id}
+            company={resume.company}
+            initialCandidateNote={resume.cover_letter_candidate_note || ""}
+            initialContent={resume.cover_letter_content || ""}
+            initialMethod={resume.cover_letter_method || ""}
+            initialStatus={resume.cover_letter_status || "not_started"}
+          />
+        ) : null}
         <p className="muted version-change-summary">{resume.change_summary}</p>
         {!content.sections?.length ? <div className="callout warning"><strong>Legacy draft:</strong> regenerate this resume to use the new ATS-safe structure and inline editor.</div> : null}
         <div className="resume-preview-shell">
           <div className="resume-preview-toolbar" aria-label="Resume file actions">
             <div className="inline-actions">
               {resume.apply_url ? <a className="text-link" href={resume.apply_url} target="_blank" rel="noreferrer">Open application</a> : null}
-              <Link className="text-link" href={`/resumes/${resume.id}`}>Edit resume</Link>
+              <Link className="text-link" href={`/jobs/${resume.job_id}?tab=resume`}>Edit resume</Link>
             </div>
             <a className="button secondary small" href={`/api/resumes/${resume.id}/pdf`}>Download PDF</a>
           </div>
@@ -108,7 +124,7 @@ export default function QueuePage() {
   const minimumScore = Number(getSetting("minimum_queue_score", "65"));
   const matchedJobs = db.prepare(`
     SELECT * FROM jobs
-    WHERE hard_filter_pass = 1
+    WHERE eligibility_status = 'eligible'
       AND (status = 'shortlisted' OR score >= ?)
       AND status NOT IN ('irrelevant', 'dismissed', 'archived')
       AND id NOT IN (SELECT job_id FROM resume_versions)
@@ -117,21 +133,23 @@ export default function QueuePage() {
   `).all(minimumScore) as Job[];
   const resumes = db.prepare(`
     SELECT resume_versions.*, jobs.title, jobs.company, jobs.score, jobs.apply_url, jobs.description,
+      applications.id AS application_id,
+      applications.status AS application_status,
+      cover_letters.content AS cover_letter_content,
+      cover_letters.generation_method AS cover_letter_method,
+      cover_letters.status AS cover_letter_status,
+      cover_letters.candidate_note AS cover_letter_candidate_note,
       CASE WHEN resume_versions.id = (
         SELECT latest_resume.id
         FROM resume_versions AS latest_resume
         WHERE latest_resume.job_id = jobs.id
         ORDER BY latest_resume.created_at DESC, latest_resume.id DESC
         LIMIT 1
-      ) THEN 1 ELSE 0 END AS is_latest,
-      (
-        SELECT applications.status
-        FROM applications
-        WHERE applications.job_id = jobs.id
-        ORDER BY applications.id DESC
-        LIMIT 1
-      ) AS application_status
-    FROM resume_versions JOIN jobs ON jobs.id = resume_versions.job_id
+      ) THEN 1 ELSE 0 END AS is_latest
+    FROM resume_versions
+    JOIN jobs ON jobs.id = resume_versions.job_id
+    LEFT JOIN applications ON applications.job_id = jobs.id
+    LEFT JOIN cover_letters ON cover_letters.application_id = applications.id
     ORDER BY resume_versions.created_at DESC, resume_versions.id DESC
   `).all() as ResumeRow[];
   const { pendingGroups, approvedGroups, rejectedGroups } = partitionResumeQueue(resumes);

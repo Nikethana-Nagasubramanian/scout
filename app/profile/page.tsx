@@ -20,14 +20,14 @@ export default function ProfilePage() {
       <div className="dashboard-grid">
         <form action={saveProfileAction} className="card form-card">
           <section className="form-section">
-            <h2>Identity and summary</h2>
-            <p>Keep these fields current because every resume export uses them.</p>
+            <h2>Identity and default summary</h2>
+            <p>Keep these fields current because every newly generated resume uses them.</p>
             <div className="form-grid">
               <div className="field"><label htmlFor="full_name">Full name</label><input id="full_name" name="full_name" required defaultValue={profile.full_name} /></div>
               <div className="field"><label htmlFor="email">Email</label><input id="email" name="email" type="email" defaultValue={profile.email} /></div>
               <div className="field"><label htmlFor="phone">Phone</label><input id="phone" name="phone" defaultValue={profile.phone} /></div>
               <div className="field"><label htmlFor="home_location">Current location</label><input id="home_location" name="home_location" defaultValue={profile.home_location} /></div>
-              <div className="field full"><label htmlFor="professional_summary">Professional summary</label><textarea id="professional_summary" name="professional_summary" defaultValue={profile.professional_summary} /></div>
+              <div className="field full"><label htmlFor="professional_summary">Default resume summary</label><textarea id="professional_summary" name="professional_summary" rows={5} defaultValue={profile.professional_summary} /><small>This is the source of truth for the summary in newly generated resumes. Replace the current Product Designer / Design Engineer wording here.</small></div>
             </div>
           </section>
 
@@ -51,7 +51,7 @@ export default function ProfilePage() {
           <section className="form-section">
             <h2>Resume and links</h2>
             <div className="form-grid">
-              <div className="field full"><label htmlFor="base_resume_text">Base resume text</label><textarea id="base_resume_text" name="base_resume_text" rows={12} defaultValue={profile.base_resume_text} /></div>
+              <div className="field full"><label htmlFor="base_resume_text">Full base resume content</label><textarea id="base_resume_text" name="base_resume_text" rows={18} defaultValue={profile.base_resume_text} /><small>Paste the complete latest resume here. Existing tailored resume versions remain unchanged so an approved application cannot change unexpectedly.</small></div>
               <div className="field"><label htmlFor="portfolio_url">Portfolio URL</label><input id="portfolio_url" name="portfolio_url" type="url" defaultValue={profile.portfolio_url} /></div>
               <div className="field"><label htmlFor="linkedin_url">LinkedIn URL</label><input id="linkedin_url" name="linkedin_url" type="url" defaultValue={profile.linkedin_url} /></div>
               <div className="field"><label htmlFor="github_url">GitHub URL</label><input id="github_url" name="github_url" type="url" defaultValue={profile.github_url} /></div>

@@ -50,12 +50,15 @@ function job(overrides: Partial<Job> = {}): Job {
     status: "discovered",
     score: null,
     hard_filter_pass: null,
+    eligibility_status: "needs_verification",
     score_breakdown: null,
     match_summary: null,
     seen_count: 1,
     confidence_score: null,
     confidence_breakdown: null,
     confidence_summary: null,
+    duplicate_of_job_id: null,
+    duplicate_reason: "",
     ...overrides,
   };
 }
@@ -68,16 +71,44 @@ describe("scoreJob", () => {
     expect(result.matchingSkills).toHaveLength(3);
   });
 
+  it("scores coverage against detected job requirements instead of every saved skill", () => {
+    const result = scoreJob(job({
+      description: "Use Figma and accessibility practices to design an enterprise SaaS product.",
+    }), {
+      ...profile,
+      professional_summary: "Product designer for accessible SaaS products",
+      base_resume_text: "Built accessible workflows in Figma for B2B SaaS customers.",
+      skills: JSON.stringify(["Figma", "User research", "Design systems", "Accessibility", "SaaS"]),
+    });
+
+    expect(result.matchingSkills).toEqual(expect.arrayContaining(["Figma", "Accessibility", "SaaS"]));
+    expect(result.missingSkills).toContain("Enterprise");
+    expect(result.skills).toBe(26);
+  });
+
+  it("uses a neutral requirement score when a posting provides no specific requirements", () => {
+    const result = scoreJob(job({ description: "Join our team and make a meaningful impact." }), profile);
+    expect(result.skills).toBe(18);
+    expect(result.matchingSkills).toEqual([]);
+    expect(result.missingSkills).toEqual([]);
+  });
+
   it("explains a sponsorship hard filter", () => {
     const result = scoreJob(job({ description: "Applicants must work without sponsorship." }), { ...profile, sponsorship_required: 1 });
     expect(result.hardFilterPass).toBe(false);
     expect(result.hardFilterReasons[0]).toContain("sponsorship");
   });
 
-  it("does not hide location mismatch reasoning", () => {
-    const result = scoreJob(job({ location: "Austin, TX", workplace_type: "on-site" }), profile);
-    expect(result.hardFilterPass).toBe(false);
-    expect(result.hardFilterReasons.join(" ")).toContain("location");
+  it("keeps an ambiguous location visible for verification", () => {
+    const result = scoreJob(job({ location: "Remote", workplace_type: "remote" }), profile, {
+      usaOnly: true,
+      minimumExperience: 2,
+      maximumExperience: 5,
+      maximumAgeDays: 60,
+    });
+    expect(result.hardFilterPass).toBe(true);
+    expect(result.eligibilityStatus).toBe("needs_verification");
+    expect(result.verificationReasons.join(" ")).toContain("United States");
   });
 
   it("strictly rejects unrelated, senior, foreign, and overqualified roles", () => {
@@ -88,7 +119,7 @@ describe("scoreJob", () => {
       years_experience: 5,
       preferred_locations: JSON.stringify(["United States", "Boston"]),
     };
-    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5 };
+    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
     expect(scoreJob(job({ title: "Staff Product Designer" }), strictProfile, preferences).hardFilterPass).toBe(false);
     expect(scoreJob(job({ title: "Software Engineer" }), strictProfile, preferences).hardFilterPass).toBe(false);
     expect(scoreJob(job({ title: "Product Designer", location: "Sao Paulo, Brazil" }), strictProfile, preferences).hardFilterPass).toBe(false);
@@ -108,7 +139,7 @@ describe("scoreJob", () => {
       target_seniority: "mid",
       target_titles: JSON.stringify(["Product Designer"]),
       preferred_locations: JSON.stringify(["United States"]),
-    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5 });
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
     expect(result.hardFilterPass).toBe(true);
   });
 
@@ -124,7 +155,7 @@ describe("scoreJob", () => {
       target_seniority: "mid",
       target_titles: JSON.stringify(["Product Designer"]),
       preferred_locations: JSON.stringify(["United States"]),
-    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5 });
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
     expect(result.hardFilterPass).toBe(true);
   });
 
@@ -139,7 +170,7 @@ describe("scoreJob", () => {
       target_seniority: "mid",
       target_titles: JSON.stringify(["Product Designer"]),
       preferred_locations: JSON.stringify(["United States"]),
-    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5 });
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
     expect(result.hardFilterPass).toBe(true);
   });
 
@@ -156,9 +187,151 @@ describe("scoreJob", () => {
       target_titles: JSON.stringify(["Product Designer"]),
       preferred_locations: JSON.stringify(["United States"]),
       minimum_salary: 120000,
-    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5 });
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
     expect(result.hardFilterPass).toBe(true);
     expect(result.compensation).toBe(0);
+  });
+
+  it("accepts only the strict target design titles", () => {
+    const strictProfile = {
+      ...profile,
+      target_seniority: "mid",
+      years_experience: 5,
+      preferred_locations: JSON.stringify(["United States"]),
+    };
+    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
+    for (const title of ["UI/UX Designer", "Design Engineer", "Product Design Engineer"]) {
+      const result = scoreJob(job({
+        title,
+        location: "Remote, United States",
+        description: "Build digital product interfaces using Figma and React. Required qualifications include 3 to 5 years of relevant experience.",
+      }), strictProfile, preferences);
+      expect(result.eligibilityStatus, title).toBe("eligible");
+    }
+    for (const title of ["UX Designer", "Interaction Designer"]) {
+      const result = scoreJob(job({
+        title,
+        location: "Remote, United States",
+        description: "Design digital product experiences using Figma. Required qualifications include 3 to 5 years of relevant experience.",
+      }), strictProfile, preferences);
+      expect(result.eligibilityStatus, title).toBe("filtered");
+    }
+  });
+
+  it("filters hardware Design Engineer roles even when the title matches", () => {
+    const result = scoreJob(job({
+      title: "Design Engineer",
+      location: "Austin, Texas",
+      description: "Create SolidWorks CAD drawings and tolerance analysis for manufacturing. Requires 3 years of experience.",
+    }), {
+      ...profile,
+      target_seniority: "mid",
+      years_experience: 5,
+      preferred_locations: JSON.stringify(["United States"]),
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
+    expect(result.eligibilityStatus).toBe("filtered");
+    expect(result.hardFilterReasons.join(" ")).toContain("digital Design Engineer");
+  });
+
+  it("filters Apple hardware Product Design Engineer roles", () => {
+    const strictProfile = {
+      ...profile,
+      target_seniority: "mid",
+      years_experience: 5,
+      preferred_locations: JSON.stringify(["United States"]),
+    };
+    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
+    for (const description of [
+      "Own mechanical architecture and end-to-end design for cross-domain prototype systems.",
+      "Develop mechanisms, enclosure design, GD&T, tooling, and mass production processes.",
+      "Contribute to Apple Vision Pro product development and prototype spatial computing solutions.",
+    ]) {
+      const result = scoreJob(job({
+        title: "Product Design Engineer",
+        company: "Apple",
+        location: "Cupertino, California",
+        description,
+      }), strictProfile, preferences);
+      expect(result.eligibilityStatus, description).toBe("filtered");
+    }
+  });
+
+  it("accepts Senior Product Designer when the posting asks for five years or less", () => {
+    const result = scoreJob(job({
+      title: "Senior Product Designer",
+      location: "Remote, United States",
+      description: "Required qualifications include 5 years of relevant experience.",
+    }), {
+      ...profile,
+      target_seniority: "mid",
+      years_experience: 5,
+      preferred_locations: JSON.stringify(["United States"]),
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
+    expect(result.eligibilityStatus).toBe("eligible");
+  });
+
+  it("asks for verification when a Senior title omits the years requirement", () => {
+    const result = scoreJob(job({
+      title: "Senior Product Designer",
+      location: "Remote, United States",
+      description: "Create product experiences with a cross-functional team.",
+    }), {
+      ...profile,
+      target_seniority: "mid",
+      years_experience: 5,
+      preferred_locations: JSON.stringify(["United States"]),
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
+    expect(result.hardFilterPass).toBe(true);
+    expect(result.eligibilityStatus).toBe("needs_verification");
+  });
+
+  it("filters roles older than two months", () => {
+    const postedAt = new Date(Date.now() - 61 * 86_400_000).toISOString();
+    const result = scoreJob(job({
+      title: "Product Designer",
+      location: "Remote, United States",
+      posted_at: postedAt,
+      description: "Required qualifications include 3 years of relevant experience.",
+    }), {
+      ...profile,
+      target_seniority: "mid",
+      preferred_locations: JSON.stringify(["United States"]),
+    }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
+    expect(result.eligibilityStatus).toBe("filtered");
+    expect(result.hardFilterReasons.join(" ")).toContain("61 days old");
+  });
+
+  it("filters official postings with explicit non-US country locations", () => {
+    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
+    for (const location of ["Malaysia", "Seoul, Korea", "Tokyo, Japan", "Taipei, Taiwan", "London, United Kingdom"]) {
+      const result = scoreJob(job({
+        title: "Product Designer",
+        location,
+        description: "Required qualifications include 4 years of relevant experience.",
+      }), {
+        ...profile,
+        target_seniority: "mid",
+        preferred_locations: JSON.stringify(["United States"]),
+      }, preferences);
+      expect(result.eligibilityStatus, location).toBe("filtered");
+    }
+  });
+
+  it("filters graphic, pure web, and leadership design roles", () => {
+    const strictProfile = {
+      ...profile,
+      target_seniority: "mid",
+      preferred_locations: JSON.stringify(["United States"]),
+    };
+    const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
+    for (const title of ["Graphic Designer", "Web Designer", "Lead Product Designer", "Design Manager"]) {
+      const result = scoreJob(job({
+        title,
+        location: "Remote, United States",
+        description: "Required qualifications include 4 years of relevant experience.",
+      }), strictProfile, preferences);
+      expect(result.eligibilityStatus, title).toBe("filtered");
+    }
   });
 });
 

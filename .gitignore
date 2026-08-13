@@ -5,6 +5,7 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-*
 data/*.sqlite.*
+data/*.db
 data/generated/
 data/backups/
 tmp/

@@ -1,4 +1,4 @@
-export type SourceType = "greenhouse" | "lever";
+export type SourceType = "greenhouse" | "lever" | "ashby";
 export type CollectionMode = "manual" | "automatic";
 export type JobStatus = "discovered" | "reviewing" | "shortlisted" | "irrelevant" | "dismissed" | "archived";
 export type ResumeStatus = "draft" | "approved" | "rejected";
@@ -12,6 +12,7 @@ export type ApplicationStatus =
   | "withdrawn"
   | "offer"
   | "archived";
+export type EligibilityStatus = "eligible" | "needs_verification" | "filtered";
 
 export interface CandidateProfile {
   id: number;
@@ -58,6 +59,26 @@ export interface JobSource {
   last_success_at: string | null;
   last_error: string;
   consecutive_failures: number;
+  auto_discovered: number;
+  discovered_from_url: string;
+  discovered_via_name: string;
+  discovered_via_url: string;
+  created_at: string;
+}
+
+export interface CompanyDiscoverySource {
+  id: number;
+  name: string;
+  url: string;
+  include_companies: string;
+  exclude_companies: string;
+  enabled: number;
+  cooldown_until: string | null;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_error: string;
+  consecutive_failures: number;
+  query_cursor: number;
   created_at: string;
 }
 
@@ -112,12 +133,47 @@ export interface Job {
   status: JobStatus;
   score: number | null;
   hard_filter_pass: number | null;
+  eligibility_status: EligibilityStatus;
   score_breakdown: string | null;
   match_summary: string | null;
   seen_count: number;
   confidence_score: number | null;
   confidence_breakdown: string | null;
   confidence_summary: string | null;
+  duplicate_of_job_id: number | null;
+  duplicate_reason: string;
+}
+
+export interface ContactResearch {
+  id: number;
+  job_id: number;
+  status: string;
+  company_domain: string;
+  company_size: number | null;
+  company_size_label: string;
+  person_name: string;
+  person_title: string;
+  email: string;
+  email_confidence: number | null;
+  evidence_url: string;
+  evidence_summary: string;
+  candidates_json: string;
+  provider: string;
+  credits_used: number;
+  last_error: string;
+  searched_at: string | null;
+  updated_at: string;
+}
+
+export interface CoverLetter {
+  id: number;
+  application_id: number;
+  content: string;
+  generation_method: string;
+  evidence_json: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ConfidenceBreakdown {
@@ -142,8 +198,10 @@ export interface ScoreBreakdown {
   recency: number;
   compensation: number;
   total: number;
+  eligibilityStatus: EligibilityStatus;
   hardFilterPass: boolean;
   hardFilterReasons: string[];
+  verificationReasons: string[];
   matchingSkills: string[];
   missingSkills: string[];
 }

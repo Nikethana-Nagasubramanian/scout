@@ -3,17 +3,31 @@ import Link from "next/link";
 export function ScoreBadge({ score, passed = true }: { score: number | null; passed?: boolean }) {
   const value = score ?? 0;
   const tone = !passed ? "danger" : value >= 80 ? "strong" : value >= 65 ? "good" : "muted";
-  return <span className={`score-badge ${tone}`}>{!passed ? "Filtered" : `${value}%`}</span>;
+  return <span className={`score-badge ${tone}`} title="Profile match">{!passed ? "Filtered" : `${value}% match`}</span>;
 }
 
 export function ConfidenceBadge({ score }: { score: number | null }) {
   const value = score ?? 0;
   const tone = value >= 75 ? "strong" : value >= 55 ? "good" : "muted";
-  return <span className={`score-badge ${tone}`} title="Posting confidence, not candidate fit">{value}% signal</span>;
+  return <span className={`score-badge ${tone}`} title="Posting signal, not profile match">{value}% signal</span>;
 }
 
 export function StatusPill({ status }: { status: string }) {
-  return <span className={`status-pill status-${status}`}>{status.replaceAll("_", " ")}</span>;
+  const labels: Record<string, string> = {
+    completed_with_errors: "Completed, source issue",
+    completed_with_warnings: "Completed, cooldowns active",
+    needs_verification: "Needs verification",
+    needs_review: "Needs review",
+    ready_to_apply: "Ready to apply",
+    recruiter_screen: "Recruiter screen",
+    follow_up_due: "Follow-up due",
+  };
+  return (
+    <span className={`status-pill status-${status}`}>
+      <span className="status-dot" aria-hidden="true" />
+      {labels[status] || status.replaceAll("_", " ")}
+    </span>
+  );
 }
 
 export function EmptyState({

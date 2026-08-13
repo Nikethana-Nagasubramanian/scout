@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
 import { db, setSetting } from "@/lib/database";
-import { runCollection, scoreAllJobs } from "@/lib/collector";
+import { discoverOfficialBoardForJob, runCollection, scoreAllJobs } from "@/lib/collector";
+import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
 import { toJsonList } from "@/lib/utils";
 
@@ -42,6 +43,22 @@ function validatedResumeContent(formData: FormData): { id: number; contentJson: 
   } catch {
     return null;
   }
+}
+
+function ensureReadyApplicationForResume(resumeId: number): void {
+  const resume = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resumeId) as { job_id: number } | undefined;
+  if (!resume) return;
+  db.prepare(`
+    INSERT INTO applications (job_id, resume_version_id, status)
+    VALUES (?, ?, 'ready_to_apply')
+    ON CONFLICT(job_id) DO UPDATE SET
+      resume_version_id = excluded.resume_version_id,
+      status = CASE
+        WHEN applications.status = 'ready_to_apply' THEN 'ready_to_apply'
+        ELSE applications.status
+      END,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(resume.job_id, resumeId);
 }
 
 function persistProfile(formData: FormData): void {
@@ -126,12 +143,50 @@ export async function addSourceAction(formData: FormData): Promise<void> {
   const name = text(formData, "name");
   const identifier = text(formData, "identifier").replace(/^https?:\/\/[^/]+\//, "").split(/[/?#]/)[0];
   const sourceType = text(formData, "source_type");
-  if (!name || !identifier || !["greenhouse", "lever"].includes(sourceType)) return;
+  if (!name || !identifier || !["greenhouse", "lever", "ashby"].includes(sourceType)) return;
   db.prepare("INSERT OR IGNORE INTO job_sources (name, source_type, identifier) VALUES (?, ?, ?)").run(
     name,
     sourceType,
     identifier,
   );
+  revalidatePath("/sources");
+}
+
+export async function addCompanyDiscoverySourceAction(formData: FormData): Promise<void> {
+  const name = text(formData, "name");
+  const value = text(formData, "url");
+  const includeCompanies = text(formData, "include_companies");
+  const excludeCompanies = text(formData, "exclude_companies");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return;
+  }
+  if (!name || !["http:", "https:"].includes(url.protocol)) return;
+  db.prepare(`
+    INSERT INTO company_discovery_sources (name, url, include_companies, exclude_companies)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(url) DO UPDATE SET
+      name = excluded.name,
+      include_companies = excluded.include_companies,
+      exclude_companies = excluded.exclude_companies,
+      enabled = 1
+  `).run(name, url.toString(), includeCompanies, excludeCompanies);
+  revalidatePath("/sources");
+}
+
+export async function toggleCompanyDiscoverySourceAction(formData: FormData): Promise<void> {
+  db.prepare(`
+    UPDATE company_discovery_sources
+    SET enabled = CASE enabled WHEN 1 THEN 0 ELSE 1 END
+    WHERE id = ?
+  `).run(Number(text(formData, "id")));
+  revalidatePath("/sources");
+}
+
+export async function deleteCompanyDiscoverySourceAction(formData: FormData): Promise<void> {
+  db.prepare("DELETE FROM company_discovery_sources WHERE id = ?").run(Number(text(formData, "id")));
   revalidatePath("/sources");
 }
 
@@ -207,8 +262,10 @@ export async function addManualJobAction(formData: FormData): Promise<void> {
     jobId = Number(result.lastInsertRowid);
   }
   scoreAllJobs();
+  await discoverOfficialBoardForJob(jobId);
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/sources");
   redirect(`/jobs/${jobId}?imported=1`);
 }
 
@@ -234,22 +291,20 @@ export async function approveJobAction(formData: FormData): Promise<void> {
     ORDER BY created_at DESC, id DESC
     LIMIT 1
   `).get(id) as { id: number; status: string } | undefined;
-  const resumeId = !latestResume || latestResume.status === "rejected"
-    ? await createResumeVersion(id)
-    : latestResume.id;
+  if (!latestResume || latestResume.status === "rejected") await createResumeVersion(id);
   revalidatePath("/");
   revalidatePath("/jobs");
   revalidatePath("/queue");
   revalidatePath(`/jobs/${id}`);
-  redirect(`/resumes/${resumeId}`);
+  redirect(`/jobs/${id}?tab=resume`);
 }
 
 export async function generateResumeAction(formData: FormData): Promise<void> {
   const jobId = Number(text(formData, "job_id"));
-  const resumeId = await createResumeVersion(jobId);
+  await createResumeVersion(jobId);
   revalidatePath("/queue");
   revalidatePath(`/jobs/${jobId}`);
-  redirect(`/resumes/${resumeId}`);
+  redirect(`/jobs/${jobId}?tab=resume`);
 }
 
 export async function updateResumeStatusAction(formData: FormData): Promise<void> {
@@ -261,7 +316,9 @@ export async function updateResumeStatusAction(formData: FormData): Promise<void
     status,
     id,
   );
+  if (status === "approved") ensureReadyApplicationForResume(id);
   revalidatePath("/queue");
+  revalidatePath("/applications");
   revalidatePath(`/resumes/${id}`);
   redirect(status === "rejected" ? "/queue#rejected-resumes" : "/queue");
 }
@@ -275,7 +332,8 @@ export async function saveResumeContentAction(formData: FormData): Promise<void>
   );
   revalidatePath(`/resumes/${resume.id}`);
   revalidatePath("/queue");
-  redirect(`/resumes/${resume.id}`);
+  const row = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resume.id) as { job_id: number } | undefined;
+  redirect(row ? `/jobs/${row.job_id}?tab=resume` : `/resumes/${resume.id}`);
 }
 
 export async function saveAndApproveResumeAction(formData: FormData): Promise<void> {
@@ -285,10 +343,13 @@ export async function saveAndApproveResumeAction(formData: FormData): Promise<vo
     resume.contentJson,
     resume.id,
   );
+  ensureReadyApplicationForResume(resume.id);
   revalidatePath(`/resumes/${resume.id}`);
   revalidatePath("/queue");
+  revalidatePath("/applications");
   revalidatePath("/jobs");
-  redirect(`/resumes/${resume.id}`);
+  const row = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resume.id) as { job_id: number } | undefined;
+  redirect(row ? `/jobs/${row.job_id}?tab=resume` : `/resumes/${resume.id}`);
 }
 
 export async function createApplicationAction(formData: FormData): Promise<void> {
@@ -345,7 +406,7 @@ export async function updateApplicationAction(formData: FormData): Promise<void>
   const status = text(formData, "status");
   const allowed = [
     "ready_to_apply", "applied", "follow_up_due", "recruiter_screen", "interview",
-    "rejected", "withdrawn", "offer", "archived",
+    "needs_review", "blocked", "expired", "ineligible", "rejected", "withdrawn", "offer", "archived",
   ];
   if (!allowed.includes(status)) return;
   const existing = db.prepare("SELECT * FROM applications WHERE id = ?").get(id) as {
@@ -382,6 +443,15 @@ export async function updateApplicationAction(formData: FormData): Promise<void>
   revalidatePath("/");
 }
 
+export async function searchContactsAction(formData: FormData): Promise<void> {
+  const jobId = Number(text(formData, "job_id"));
+  if (!Number.isFinite(jobId) || jobId <= 0) return;
+  await searchContactForJob(jobId);
+  revalidatePath("/applications");
+  revalidatePath("/contacts");
+  revalidatePath("/applications");
+}
+
 export async function saveSettingsAction(formData: FormData): Promise<void> {
   const mode = text(formData, "collection_mode") === "automatic" ? "automatic" : "manual";
   setSetting("collection_mode", mode);
@@ -395,6 +465,7 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   setSetting("search_usa_only", formData.get("search_usa_only") ? "1" : "0");
   setSetting("search_experience_min", String(minimumExperience));
   setSetting("search_experience_max", String(maximumExperience));
+  setSetting("search_max_age_days", String(Math.max(1, nullableNumber(formData, "search_max_age_days") ?? 60)));
   setSetting("local_ai_enabled", formData.get("local_ai_enabled") ? "1" : "0");
   setSetting("ollama_model", text(formData, "ollama_model") || "llama3.2:3b");
   scoreAllJobs();

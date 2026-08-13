@@ -54,11 +54,6 @@ export function Nav() {
           </section>
         ))}
       </nav>
-      <div className="privacy-note">
-        <span className="privacy-dot" />
-        Private and local
-        <small>Your resume and personal details stay on this Mac.</small>
-      </div>
     </aside>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeAshbyJobs,
   normalizeGreenhouseJobs,
   normalizeHimalayasJobs,
   normalizeJobicyJobs,
@@ -8,7 +9,7 @@ import {
   parseRetryAfter,
   retryDelay,
 } from "@/lib/collector";
-import { parseJobAlertEmail } from "@/lib/gmail-alerts";
+import { parseHiringNewsletterSignals, parseJobAlertEmail } from "@/lib/gmail-alerts";
 import type { JobSource } from "@/lib/types";
 
 const greenhouseSource: JobSource = {
@@ -22,6 +23,10 @@ const greenhouseSource: JobSource = {
   last_success_at: null,
   last_error: "",
   consecutive_failures: 0,
+  auto_discovered: 0,
+  discovered_from_url: "",
+  discovered_via_name: "",
+  discovered_via_url: "",
   created_at: "2026-01-01",
 };
 
@@ -31,6 +36,14 @@ const leverSource: JobSource = {
   name: "Lever Company",
   source_type: "lever",
   identifier: "lever-company",
+};
+
+const ashbySource: JobSource = {
+  ...greenhouseSource,
+  id: 3,
+  name: "Ashby Company",
+  source_type: "ashby",
+  identifier: "ashby-company",
 };
 
 describe("job source normalization", () => {
@@ -63,6 +76,40 @@ describe("job source normalization", () => {
     expect(job.location).toBe("Chicago, New York");
     expect(job.description).toBe("Opening\n\nDescription");
     expect(job.salaryMax).toBe(130000);
+  });
+
+  it("normalizes listed Ashby jobs and annual compensation", () => {
+    const jobs = normalizeAshbyJobs(ashbySource, [{
+      title: "Product Designer",
+      location: "New York, NY",
+      secondaryLocations: [{ location: "Remote, United States" }],
+      isListed: true,
+      isRemote: true,
+      workplaceType: "Remote",
+      descriptionPlain: "Design trusted product workflows.",
+      publishedAt: "2026-07-25T12:00:00Z",
+      employmentType: "FullTime",
+      jobUrl: "https://jobs.ashbyhq.com/ashby-company/job-123",
+      applyUrl: "https://jobs.ashbyhq.com/ashby-company/job-123/application",
+      compensation: {
+        summaryComponents: [{
+          compensationType: "Salary",
+          interval: "1 YEAR",
+          currencyCode: "USD",
+          minValue: 120000,
+          maxValue: 150000,
+        }],
+      },
+    }, {
+      title: "Unlisted Designer",
+      isListed: false,
+      jobUrl: "https://jobs.ashbyhq.com/ashby-company/hidden",
+      applyUrl: "https://jobs.ashbyhq.com/ashby-company/hidden/application",
+    }]);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].location).toBe("New York, NY, Remote, United States");
+    expect(jobs[0].salaryMax).toBe(150000);
+    expect(jobs[0].externalId).toBe("job-123");
   });
 
   it("normalizes Remotive discovery jobs", () => {
@@ -140,6 +187,42 @@ describe("collector rate-limit helpers", () => {
 });
 
 describe("Gmail alert parsing", () => {
+  it("separates explicit newsletter roles from broad company hiring signals", () => {
+    const input = {
+      html: `
+        <p><strong>Gamma</strong> builds an AI presentation platform. We are hiring a Forward Deployed Designer in San Francisco. <a href="https://careers.gamma.app/jobs/forward-deployed-designer">Apply here</a></p>
+        <p><strong>Ineffable Intelligence</strong> raised a seed round and is hiring technical staff members. <a href="https://jobs.ashbyhq.com/ineffable">View open roles</a></p>
+        <p><a href="https://a16zbuild.substack.com/account">Manage preferences</a></p>
+      `,
+      text: "",
+      subject: "Open roles with founders",
+      from: "a16z Build <newsletter@substack.com>",
+      date: new Date("2026-05-05T12:00:00Z"),
+    };
+
+    const signals = parseHiringNewsletterSignals(input);
+    const jobs = parseJobAlertEmail(input);
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toMatchObject({
+      company: "Gamma",
+      roleHint: "Forward Deployed Designer",
+      signalType: "explicit_role",
+    });
+    expect(signals[1]).toMatchObject({
+      company: "Ineffable Intelligence",
+      roleHint: "",
+      signalType: "company_hiring",
+    });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      company: "Gamma",
+      title: "Forward Deployed Designer",
+      sourceType: "gmail_newsletter",
+      sourceName: "a16z Build newsletter",
+    });
+  });
+
   it("extracts an Indeed job card without preserving tracking parameters", () => {
     const jobs = parseJobAlertEmail({
       html: `

@@ -1,17 +1,57 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { generateResumeAction, updateJobStatusAction } from "@/app/actions";
-import { ConfidenceBadge, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
+import { approveJobAction, generateResumeAction, updateJobStatusAction } from "@/app/actions";
+import { ResumeEditor } from "@/components/ResumeEditor";
+import { ConfidenceBadge, ScoreBadge, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
 import { db } from "@/lib/database";
-import type { ConfidenceBreakdown, Job, ScoreBreakdown } from "@/lib/types";
+import { inferRequiredExperience } from "@/lib/job-fit";
+import type { ConfidenceBreakdown, Job, ResumeContent, ScoreBreakdown } from "@/lib/types";
 import { formatDate, safeJson } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 interface JobPageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ imported?: string }>;
+  searchParams: Promise<{ imported?: string; tab?: string }>;
+}
+
+interface ResumeRow {
+  id: number;
+  status: string;
+  content_json: string;
+}
+
+interface ApplicationRow {
+  id: number;
+  status: string;
+}
+
+type WorkspaceTab = "description" | "match" | "resume";
+
+function selectedTab(value: string | undefined): WorkspaceTab {
+  return value === "match" || value === "resume" ? value : "description";
+}
+
+function salaryLabel(job: Job): string {
+  if (!job.salary_min && !job.salary_max) return "Salary not listed";
+  const formatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: job.salary_currency || "USD",
+    maximumFractionDigits: 0,
+  });
+  if (job.salary_min && job.salary_max) return `${formatter.format(job.salary_min)} to ${formatter.format(job.salary_max)}`;
+  return job.salary_min ? `From ${formatter.format(job.salary_min)}` : `Up to ${formatter.format(job.salary_max || 0)}`;
+}
+
+function experienceLabel(description: string): string {
+  const experience = inferRequiredExperience(description);
+  if (experience.minimum !== null && experience.maximum !== null && experience.minimum !== experience.maximum) {
+    return `${experience.minimum} to ${experience.maximum} years`;
+  }
+  if (experience.minimum !== null) return `${experience.minimum}+ years`;
+  if (experience.maximum !== null) return `Up to ${experience.maximum} years`;
+  return "Experience not stated";
 }
 
 export default async function JobDetailPage({ params, searchParams }: JobPageProps) {
@@ -19,50 +59,138 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
   const query = await searchParams;
   const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(Number(id)) as Job | undefined;
   if (!job) notFound();
+
+  const tab = selectedTab(query.tab);
   const breakdown = safeJson<ScoreBreakdown>(job.score_breakdown, {
     title: 0, skills: 0, seniority: 0, location: 0, recency: 0, compensation: 0,
-    total: 0, hardFilterPass: true, hardFilterReasons: [], matchingSkills: [], missingSkills: [],
+    total: 0, eligibilityStatus: job.eligibility_status, hardFilterPass: true,
+    hardFilterReasons: [], verificationReasons: [], matchingSkills: [], missingSkills: [],
   });
-  const latestResume = db.prepare("SELECT id, status FROM resume_versions WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(job.id) as { id: number; status: string } | undefined;
-  const application = db.prepare("SELECT id, status FROM applications WHERE job_id = ?").get(job.id) as { id: number; status: string } | undefined;
-  const applicationIsActive = application && application.status !== "ready_to_apply";
   const confidence = safeJson<ConfidenceBreakdown>(job.confidence_breakdown, {
     sourceIntegrity: 0, freshness: 0, completeness: 0, specificity: 0, repeatedSightings: 0,
     companyActivity: 0, riskAdjustment: 0, total: 0, dataSufficiency: "low", positiveSignals: [], cautionSignals: [],
   });
+  const latestResume = db.prepare(`
+    SELECT id, status, content_json
+    FROM resume_versions
+    WHERE job_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).get(job.id) as ResumeRow | undefined;
+  const application = db.prepare("SELECT id, status FROM applications WHERE job_id = ?").get(job.id) as ApplicationRow | undefined;
+  const resumeContent = latestResume ? safeJson<ResumeContent>(latestResume.content_json, {
+    candidateName: "",
+    contactLine: "",
+    targetTitle: job.title,
+    summary: "",
+    skills: [],
+    facts: [],
+    sections: [],
+    audit: { selectedFactIds: [], includedKeywords: [], unsupportedKeywords: [] },
+  }) : null;
+  const sourceLabel = job.source_type === "ashby"
+    ? "Ashby application"
+    : job.source_type === "greenhouse"
+      ? "Greenhouse application"
+      : job.source_type === "lever"
+        ? "Lever application"
+        : `${job.source_name || job.source_type} source`;
+  const rejected = ["irrelevant", "dismissed", "archived"].includes(job.status);
 
   return (
-    <div className="page">
-      <PageHeader eyebrow={`${job.company} · ${job.source_type}`} title={job.title} description={`${job.location || "Location not listed"} · ${job.employment_type || job.workplace_type || "Work type not listed"}`}>
-        <ScoreBadge score={job.score} passed={job.hard_filter_pass !== 0} />
-        <ConfidenceBadge score={job.confidence_score} />
-        {job.apply_url ? <a className="button secondary" href={job.apply_url} target="_blank" rel="noreferrer">View original posting</a> : null}
-      </PageHeader>
+    <div className="page job-workspace-page">
+      <header className="job-workspace-header">
+        <div>
+          <Link className="workspace-back-link" href="/jobs">Back to jobs</Link>
+          <h1>{job.title} <span aria-hidden="true">·</span> {job.company}</h1>
+          <p className="job-workspace-meta">
+            <span>{job.location || "Location not listed"}</span>
+            <span>{salaryLabel(job)}</span>
+            <span>{experienceLabel(job.description)}</span>
+          </p>
+        </div>
+        <div className="job-workspace-actions">
+          {application && application.status !== "ready_to_apply" ? (
+            <Link className="button" href="/applications">View application</Link>
+          ) : latestResume?.status === "approved" ? (
+            job.apply_url ? <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a> : null
+          ) : latestResume && latestResume.status !== "rejected" ? (
+            <Link className="button" href={`/jobs/${job.id}?tab=resume`}>Review resume</Link>
+          ) : (
+            <form action={approveJobAction}>
+              <input type="hidden" name="id" value={job.id} />
+              <ResumeSubmitButton className="button">Approve</ResumeSubmitButton>
+            </form>
+          )}
+          {!rejected ? (
+            <form action={updateJobStatusAction}>
+              <input type="hidden" name="id" value={job.id} />
+              <input type="hidden" name="status" value="irrelevant" />
+              <button className="button danger" type="submit">Reject</button>
+            </form>
+          ) : <StatusPill status="rejected" />}
+        </div>
+      </header>
+
       {query.imported === "1" ? (
         <div className="callout success" role="status">
-          <strong>Job imported and scored.</strong>
-          <p>Scout opened the result directly because jobs outside your saved criteria are hidden from the default eligible list.</p>
+          <strong>Job imported and scored.</strong> Scout opened the workspace so you can review it immediately.
         </div>
       ) : null}
 
-      <div className="detail-grid">
-        <div className="stack">
-          <section className="card">
-            <div className="card-header"><div><h2>Match assessment</h2><p>{job.match_summary}</p></div><StatusPill status={job.status} /></div>
+      <nav className="workspace-tabs" aria-label="Job workspace">
+        <Link className={tab === "description" ? "active" : ""} href={`/jobs/${job.id}`}>Job Description</Link>
+        <Link className={tab === "match" ? "active" : ""} href={`/jobs/${job.id}?tab=match`}>Profile Match</Link>
+        <Link className={tab === "resume" ? "active" : ""} href={`/jobs/${job.id}?tab=resume`}>Edit Resume</Link>
+      </nav>
+
+      {tab === "description" ? (
+        <section className="card workspace-content-card">
+          <div className="workspace-card-tools">
+            {job.apply_url ? <a className="text-link" href={job.apply_url} target="_blank" rel="noreferrer">View application</a> : null}
+            <span className="source-chip">{sourceLabel}</span>
+          </div>
+          <div className="workspace-job-description">{job.description || "No job description was provided by this source."}</div>
+          <footer className="workspace-source-note">
+            Collected {formatDate(job.first_seen_at)} · Last seen {formatDate(job.last_seen_at)}
+            {job.canonical_url ? <a className="text-link" href={job.canonical_url} target="_blank" rel="noreferrer">View source</a> : null}
+          </footer>
+        </section>
+      ) : null}
+
+      {tab === "match" ? (
+        <div className="workspace-match-grid">
+          <section className="card workspace-score-card">
+            <div className="card-header">
+              <div><h2>Profile match</h2><p>{job.match_summary}</p></div>
+              <ScoreBadge score={job.score} passed={job.hard_filter_pass !== 0} />
+            </div>
             <div className="card-body">
-              {!breakdown.hardFilterPass ? <div className="callout warning"><strong>Hard filter review</strong><ul>{breakdown.hardFilterReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div> : null}
-              <div className="two-column">
-                <div><h3>Matching profile skills</h3><div className="tag-list">{breakdown.matchingSkills.length ? breakdown.matchingSkills.map((skill) => <span className="tag match" key={skill}>{skill}</span>) : <span className="muted">No direct skill matches found.</span>}</div></div>
-                <div><h3>Profile skills not found</h3><div className="tag-list">{breakdown.missingSkills.length ? breakdown.missingSkills.map((skill) => <span className="tag" key={skill}>{skill}</span>) : <span className="muted">No missing profile skills.</span>}</div></div>
+              {!breakdown.hardFilterPass ? <div className="callout warning"><strong>Eligibility conflict</strong><ul>{breakdown.hardFilterReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div> : null}
+              {breakdown.verificationReasons.length ? <div className="callout warning"><strong>Needs verification</strong><ul>{breakdown.verificationReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div> : null}
+              <ul className="breakdown-list workspace-breakdown">
+                <li><span>Title alignment</span><strong>{breakdown.title}/25</strong></li>
+                <li><span>Requirement coverage</span><strong>{breakdown.skills}/35</strong></li>
+                <li><span>Seniority</span><strong>{breakdown.seniority}/15</strong></li>
+                <li><span>Location</span><strong>{breakdown.location}/10</strong></li>
+                <li><span>Recency</span><strong>{breakdown.recency}/10</strong></li>
+                <li><span>Compensation</span><strong>{breakdown.compensation}/5</strong></li>
+              </ul>
+              <div className="workspace-requirements">
+                <div><h3>Requirements with evidence</h3><div className="tag-list">{breakdown.matchingSkills.length ? breakdown.matchingSkills.map((item) => <span className="tag match" key={item}>{item}</span>) : <span className="muted">No supported requirements detected.</span>}</div></div>
+                <div><h3>Requirements without evidence</h3><div className="tag-list">{breakdown.missingSkills.length ? breakdown.missingSkills.map((item) => <span className="tag" key={item}>{item}</span>) : <span className="muted">No unsupported requirements detected.</span>}</div></div>
               </div>
             </div>
           </section>
 
-          <section className="card">
-            <div className="card-header"><div><h2>Posting confidence</h2><p>{job.confidence_summary || "Waiting for scoring data."}</p></div><ConfidenceBadge score={job.confidence_score} /></div>
+          <section className="card workspace-score-card">
+            <div className="card-header">
+              <div><h2>Posting signal</h2><p>{job.confidence_summary || "Waiting for scoring data."}</p></div>
+              <ConfidenceBadge score={job.confidence_score} />
+            </div>
             <div className="card-body">
-              <div className="callout warning">Use this as an approval aid only. It is not proof that a role is genuine, funded, or actively reviewed.</div>
-              <ul className="breakdown-list">
+              <div className="callout warning">This is an approval aid, not proof that the role is active or funded.</div>
+              <ul className="breakdown-list workspace-breakdown">
                 <li><span>Source integrity</span><strong>{confidence.sourceIntegrity}/15</strong></li>
                 <li><span>Freshness</span><strong>{confidence.freshness}/25</strong></li>
                 <li><span>Completeness</span><strong>{confidence.completeness}/20</strong></li>
@@ -71,50 +199,40 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
                 <li><span>Company activity</span><strong>{confidence.companyActivity}/15</strong></li>
                 <li><span>Risk adjustment</span><strong>{confidence.riskAdjustment}</strong></li>
               </ul>
-              <h3>Positive signals</h3>
-              {confidence.positiveSignals.length ? <ul>{confidence.positiveSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul> : <p className="muted">No strong positive signals yet.</p>}
-              <h3>Caution signals</h3>
-              {confidence.cautionSignals.length ? <ul>{confidence.cautionSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul> : <p className="muted">No material cautions detected.</p>}
-              <p className="muted">Data sufficiency: <strong>{confidence.dataSufficiency}</strong></p>
+              <div className="workspace-signal-copy">
+                <div><h3>Positive signals</h3>{confidence.positiveSignals.length ? <ul>{confidence.positiveSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul> : <p className="muted">No strong positive signals yet.</p>}</div>
+                <div><h3>Caution signals</h3>{confidence.cautionSignals.length ? <ul>{confidence.cautionSignals.map((signal) => <li key={signal}>{signal}</li>)}</ul> : <p className="muted">No material cautions detected.</p>}</div>
+              </div>
             </div>
-          </section>
-
-          <section className="card">
-            <div className="card-header"><div><h2>Job description</h2><p>Source: {job.source_name || job.source_type} · Collected {formatDate(job.first_seen_at)} · Last seen {formatDate(job.last_seen_at)}</p></div>{job.canonical_url ? <a className="text-link" href={job.canonical_url} target="_blank" rel="noreferrer">View source</a> : null}</div>
-            <div className="card-body job-description">{job.description || "No description was provided by this source."}</div>
           </section>
         </div>
+      ) : null}
 
-        <aside className="stack">
-          <section className="card">
-            <div className="card-header"><div><h2>Score breakdown</h2><p>Explainable and deterministic</p></div></div>
-            <div className="card-body"><ul className="breakdown-list"><li><span>Title alignment</span><strong>{breakdown.title}/25</strong></li><li><span>Skill coverage</span><strong>{breakdown.skills}/35</strong></li><li><span>Seniority</span><strong>{breakdown.seniority}/15</strong></li><li><span>Location</span><strong>{breakdown.location}/10</strong></li><li><span>Recency</span><strong>{breakdown.recency}/10</strong></li><li><span>Compensation</span><strong>{breakdown.compensation}/5</strong></li></ul></div>
+      {tab === "resume" ? (
+        latestResume && resumeContent && latestResume.status !== "rejected" ? (
+          <ResumeEditor
+            resumeId={latestResume.id}
+            resumeStatus={latestResume.status}
+            jobId={job.id}
+            initialContent={resumeContent}
+            jobDescription={job.description}
+            jobTitle={job.title}
+            company={job.company}
+            applyUrl={job.apply_url}
+            applicationStatus={application?.status || null}
+            embedded
+          />
+        ) : (
+          <section className="card workspace-empty-resume">
+            <h2>Prepare a tailored resume</h2>
+            <p>Scout will preserve your verified experience, prioritize relevant evidence, and create an editable PDF preview for this role.</p>
+            <form action={generateResumeAction}>
+              <input type="hidden" name="job_id" value={job.id} />
+              <ResumeSubmitButton>Generate tailored resume</ResumeSubmitButton>
+            </form>
           </section>
-
-          <section className="card">
-            <div className="card-header"><div><h2>Decision</h2><p>Keep the queue intentional</p></div></div>
-            <div className="card-body stack">
-              <div className="inline-actions">
-                <form action={updateJobStatusAction}><input type="hidden" name="id" value={job.id} /><input type="hidden" name="status" value="shortlisted" /><button className="button secondary" type="submit">Shortlist</button></form>
-                <form action={updateJobStatusAction}><input type="hidden" name="id" value={job.id} /><input type="hidden" name="status" value="dismissed" /><button className="button danger" type="submit">Dismiss</button></form>
-              </div>
-              {applicationIsActive ? (
-                <Link className="button" href="/applications">View {application.status.replaceAll("_", " ")} application</Link>
-              ) : latestResume?.status === "draft" ? (
-                <Link className="button" href={`/resumes/${latestResume.id}`}>Continue preparation</Link>
-              ) : latestResume?.status === "approved" ? (
-                <Link className="button" href={`/resumes/${latestResume.id}`}>Continue to application</Link>
-              ) : (
-                <form action={generateResumeAction}>
-                  <input type="hidden" name="job_id" value={job.id} />
-                  <ResumeSubmitButton>{latestResume?.status === "rejected" ? "Prepare again" : "Prepare application"}</ResumeSubmitButton>
-                </form>
-              )}
-              <small className="muted">Next: resume workspace, approval, company application, then tracking.</small>
-            </div>
-          </section>
-        </aside>
-      </div>
+        )
+      ) : null}
     </div>
   );
 }

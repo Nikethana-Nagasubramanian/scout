@@ -19,7 +19,9 @@ interface RunRow {
   duration_ms: number | null;
   log_count: number;
   eligible_jobs: number;
+  needs_verification_jobs: number;
   filtered_jobs: number;
+  relevant_jobs: number;
 }
 
 interface DiagnosticsProps {
@@ -32,8 +34,10 @@ export default async function DiagnosticsPage({ searchParams }: DiagnosticsProps
     SELECT collection_runs.*,
       CASE WHEN completed_at IS NULL THEN NULL ELSE ROUND((julianday(completed_at) - julianday(started_at)) * 86400000) END AS duration_ms,
       (SELECT COUNT(*) FROM workflow_logs WHERE workflow_logs.run_id = collection_runs.id) AS log_count,
-      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id AND eligible = 1) AS eligible_jobs,
-      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id AND eligible = 0) AS filtered_jobs
+      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id AND classification = 'eligible') AS eligible_jobs,
+      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id AND classification = 'needs_verification') AS needs_verification_jobs,
+      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id AND classification = 'filtered') AS filtered_jobs,
+      (SELECT COUNT(*) FROM collection_job_results WHERE collection_job_results.run_id = collection_runs.id) AS relevant_jobs
     FROM collection_runs
     ORDER BY id DESC
     LIMIT 20
@@ -97,7 +101,7 @@ export default async function DiagnosticsPage({ searchParams }: DiagnosticsProps
 
       <div className="spacer" />
       <section className="card">
-        <div className="card-header"><div><h2>Optional company watchlist health</h2><p>Direct Greenhouse and Lever board checks.</p></div></div>
+        <div className="card-header"><div><h2>Official company board health</h2><p>Direct Greenhouse, Ashby, and Lever board checks.</p></div></div>
         {sources.length ? (
           <div className="table-wrap"><table><thead><tr><th>Source</th><th>Status</th><th>Last attempt</th><th>Last success</th><th>Cooldown</th><th>Last error</th></tr></thead><tbody>
             {sources.map((source) => {
@@ -125,8 +129,9 @@ export default async function DiagnosticsPage({ searchParams }: DiagnosticsProps
               <div className="three-column">
                 <div><span className="metric-label">Started</span><strong className="job-title">{formatDateTime(selectedRun.started_at)}</strong></div>
                 <div><span className="metric-label">Duration</span><strong className="job-title">{selectedRun.duration_ms === null ? "Still running" : `${selectedRun.duration_ms} ms`}</strong></div>
-                <div><span className="metric-label">Jobs</span><strong className="job-title">{selectedRun.jobs_found} fetched · {selectedRun.jobs_added} new</strong></div>
-                <div><span className="metric-label">Passed filters</span><strong className="job-title">{selectedRun.eligible_jobs}</strong></div>
+                <div><span className="metric-label">Relevant jobs</span><strong className="job-title">{selectedRun.relevant_jobs} matched · {selectedRun.jobs_added} new</strong></div>
+                <div><span className="metric-label">Eligible</span><strong className="job-title">{selectedRun.eligible_jobs}</strong></div>
+                <div><span className="metric-label">Needs verification</span><strong className="job-title">{selectedRun.needs_verification_jobs}</strong></div>
                 <div><span className="metric-label">Filtered</span><strong className="job-title">{selectedRun.filtered_jobs}</strong></div>
               </div>
               {selectedRun.error_summary ? <div className="callout warning workflow-log-summary">{selectedRun.error_summary}</div> : null}
@@ -149,7 +154,7 @@ export default async function DiagnosticsPage({ searchParams }: DiagnosticsProps
           {runs.length ? <div className="card-body stack">{runs.map((run) => <Link className="card run-link" href={`/diagnostics?run=${run.id}`} key={run.id}>
             <div className="inline-actions"><strong>Fetch {run.id}</strong><StatusPill status={run.status} /></div>
             <span className="job-meta">{run.slot.replaceAll("_", " ")} · {formatDateTime(run.started_at)}</span>
-            <span className="job-meta">{run.jobs_found} fetched · {run.jobs_added} new · {run.eligible_jobs} passed · {run.filtered_jobs} filtered · {run.log_count} logs</span>
+            <span className="job-meta">{run.relevant_jobs} relevant · {run.jobs_added} new · {run.eligible_jobs} eligible · {run.needs_verification_jobs} verify · {run.filtered_jobs} filtered · {run.log_count} logs</span>
           </Link>)}</div> : <EmptyState title="No history" body="Job fetches will appear here." />}
         </aside>
       </div>

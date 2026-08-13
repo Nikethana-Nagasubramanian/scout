@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createApplicationAction, saveAndApproveResumeAction, saveResumeContentAction } from "@/app/actions";
-import { addResumeKeyword } from "@/lib/resume-keywords";
+import type { ResumeBulletSuggestion, ResumeRewriteTarget } from "@/lib/local-ai";
 import { flattenSkillCategories, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
 import type { ResumeContent } from "@/lib/types";
 
@@ -16,9 +16,11 @@ interface ResumeEditorProps {
   company: string;
   applyUrl: string;
   applicationStatus: string | null;
+  embedded?: boolean;
 }
 
 type ResumeLine = NonNullable<ResumeContent["sections"]>[number]["lines"][number];
+type RewriteRequest = { keyword: string; targetValue: string; userEvidence: string };
 
 const atsKeywords = [
   "A/B testing",
@@ -67,6 +69,7 @@ export function ResumeEditor({
   company,
   applyUrl,
   applicationStatus,
+  embedded = false,
 }: ResumeEditorProps) {
   const [content, setContent] = useState<ResumeContent>({
     ...initialContent,
@@ -77,6 +80,8 @@ export function ResumeEditor({
   const [view, setView] = useState<"pdf" | "edit">("pdf");
   const [addingKeyword, setAddingKeyword] = useState<string | null>(null);
   const [keywordNotice, setKeywordNotice] = useState("");
+  const [keywordSuggestion, setKeywordSuggestion] = useState<ResumeBulletSuggestion | null>(null);
+  const [rewriteRequest, setRewriteRequest] = useState<RewriteRequest | null>(null);
   const [pdfVersion, setPdfVersion] = useState(0);
   const resumeText = normalized([
     content.summary,
@@ -107,6 +112,14 @@ export function ResumeEditor({
     { label: "Approve", state: resumeApproved ? "complete" : "upcoming" },
     { label: "Apply", state: applicationRecorded ? "complete" : resumeApproved ? "current" : "upcoming" },
     { label: "Track", state: applicationRecorded ? "complete" : "upcoming" },
+  ];
+  const rewriteTargetOptions = [
+    { value: "summary", label: "Summary" },
+    ...(content.sections || []).flatMap((section, sectionIndex) => /experience/i.test(section.title)
+      ? section.lines.flatMap((line, lineIndex) => line.kind === "entry" && line.text.trim()
+        ? [{ value: `experience:${sectionIndex}:${lineIndex}`, label: line.text.trim() }]
+        : [])
+      : []),
   ];
 
   function updateSectionLine(sectionIndex: number, lineIndex: number, text: string): void {
@@ -211,47 +224,127 @@ export function ResumeEditor({
     setContent({ ...content, sections });
   }
 
-  async function addKeyword(keyword: string): Promise<void> {
-    const nextContent = addResumeKeyword(content, keyword);
-    setAddingKeyword(keyword);
+  function beginKeywordRewrite(keyword: string): void {
+    setRewriteRequest({ keyword, targetValue: "summary", userEvidence: "" });
+    setKeywordSuggestion(null);
     setKeywordNotice("");
+  }
+
+  async function suggestKeywordRewrite(): Promise<void> {
+    if (!rewriteRequest) return;
+    const [kind, sectionIndex, entryLineIndex] = rewriteRequest.targetValue.split(":");
+    const target: ResumeRewriteTarget = kind === "summary"
+      ? { kind: "summary" }
+      : {
+          kind: "experience",
+          sectionIndex: Number(sectionIndex),
+          entryLineIndex: Number(entryLineIndex),
+        };
+    setAddingKeyword(rewriteRequest.keyword);
+    setKeywordNotice("");
+    setKeywordSuggestion(null);
     try {
-      const response = await fetch(`/api/resumes/${resumeId}/keyword`, {
+      const response = await fetch(`/api/resumes/${resumeId}/suggestion`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword, content: nextContent }),
+        body: JSON.stringify({
+          keyword: rewriteRequest.keyword,
+          content,
+          target,
+          userEvidence: rewriteRequest.userEvidence,
+        }),
+      });
+      const result = await response.json() as { suggestion?: ResumeBulletSuggestion; error?: string };
+      if (!response.ok || !result.suggestion) {
+        throw new Error(result.error || "The rewrite could not be suggested");
+      }
+      if (!result.suggestion.supported) {
+        setKeywordNotice(`Scout did not find a defensible rewrite for ${rewriteRequest.keyword} in that target. ${result.suggestion.reason}`);
+        return;
+      }
+      setKeywordSuggestion(result.suggestion);
+      setRewriteRequest(null);
+    } catch (error) {
+      setKeywordNotice(error instanceof Error ? error.message : "The rewrite could not be suggested");
+    } finally {
+      setAddingKeyword(null);
+    }
+  }
+
+  async function acceptKeywordRewrite(): Promise<void> {
+    if (!keywordSuggestion?.supported) return;
+    const sourceText = keywordSuggestion.targetKind === "summary"
+      ? content.summary
+      : content.sections?.[keywordSuggestion.sectionIndex]?.lines[keywordSuggestion.lineIndex]?.text;
+    if (sourceText !== keywordSuggestion.originalBullet) {
+      setKeywordNotice("The source passage changed after this suggestion was generated. Request a fresh suggestion.");
+      setKeywordSuggestion(null);
+      return;
+    }
+    const sections = keywordSuggestion.targetKind === "line"
+      ? (content.sections || []).map((section, sectionIndex) => sectionIndex === keywordSuggestion.sectionIndex
+          ? {
+              ...section,
+              lines: section.lines.map((line, lineIndex) => lineIndex === keywordSuggestion.lineIndex
+                ? { ...line, text: keywordSuggestion.suggestedBullet }
+                : line),
+            }
+          : section)
+      : content.sections;
+    const normalizedKeyword = normalized(keywordSuggestion.keyword);
+    const nextContent: ResumeContent = {
+      ...content,
+      summary: keywordSuggestion.targetKind === "summary" ? keywordSuggestion.suggestedBullet : content.summary,
+      sections,
+      highlightedKeywords: [
+        ...(content.highlightedKeywords || []).filter((item) => normalized(item) !== normalizedKeyword),
+        keywordSuggestion.keyword,
+      ],
+      audit: {
+        ...content.audit,
+        includedKeywords: [
+          ...content.audit.includedKeywords.filter((item) => normalized(item) !== normalizedKeyword),
+          keywordSuggestion.keyword,
+        ],
+        unsupportedKeywords: content.audit.unsupportedKeywords.filter((item) => normalized(item) !== normalizedKeyword),
+      },
+    };
+    setAddingKeyword(keywordSuggestion.keyword);
+    setKeywordNotice("");
+    try {
+      const response = await fetch(`/api/resumes/${resumeId}/suggestion`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: nextContent }),
       });
       const result = await response.json() as { content?: ResumeContent; error?: string };
-      if (!response.ok || !result.content) {
-        throw new Error(result.error || "The keyword could not be added");
-      }
+      if (!response.ok || !result.content) throw new Error(result.error || "The rewrite could not be saved");
       setContent(result.content);
+      setKeywordNotice(`${keywordSuggestion.keyword} was added to an existing achievement after your approval.`);
+      setKeywordSuggestion(null);
       setPdfVersion((version) => version + 1);
       setView("pdf");
-      const category = resumeSkillCategories(result.content, jobDescription)
-        .find((item) => item.skills.some((skill) => normalized(skill) === normalized(keyword)));
-      setKeywordNotice(`${keyword} was added to ${category?.name || "Skills"}. The PDF stays clean.`);
     } catch (error) {
-      setKeywordNotice(error instanceof Error ? error.message : "The keyword could not be added");
+      setKeywordNotice(error instanceof Error ? error.message : "The rewrite could not be saved");
     } finally {
       setAddingKeyword(null);
     }
   }
 
   return (
-    <form action={saveResumeContentAction} className="resume-workspace">
+    <form action={saveResumeContentAction} className={`resume-workspace${embedded ? " embedded" : ""}`}>
       <input type="hidden" name="id" value={resumeId} />
       <input type="hidden" name="job_id" value={jobId} />
       <input type="hidden" name="resume_id" value={resumeId} />
       <input type="hidden" name="content_json" value={JSON.stringify(content)} readOnly />
-      <ol className="application-progress" aria-label="Application preparation progress">
+      {!embedded ? <ol className="application-progress" aria-label="Application preparation progress">
         {workflowSteps.map((step, index) => (
           <li className={step.state} key={step.label}>
             <span>{step.state === "complete" ? "✓" : index + 1}</span>
             <small>{step.label}</small>
           </li>
         ))}
-      </ol>
+      </ol> : null}
       <div className="editor-toolbar">
         <div className="view-switcher" aria-label="Resume view">
           <button className={view === "pdf" ? "button small" : "button ghost small"} type="button" onClick={() => setView("pdf")}>PDF preview</button>
@@ -399,10 +492,10 @@ export function ResumeEditor({
                       <button
                         type="button"
                         className="keyword-add"
-                        onClick={() => void addKeyword(item.keyword)}
+                        onClick={() => beginKeywordRewrite(item.keyword)}
                         disabled={addingKeyword !== null}
-                        aria-label={`Add ${item.keyword} to resume skills`}
-                        title={`Add ${item.keyword} to Skills`}
+                        aria-label={`Suggest an experience rewrite for ${item.keyword}`}
+                        title={`Suggest a truthful bullet rewrite for ${item.keyword}`}
                       >
                         {addingKeyword === item.keyword ? <span className="spinner" aria-hidden="true" /> : "+"}
                       </button>
@@ -410,14 +503,71 @@ export function ResumeEditor({
                   </span>
                 )) : <span className="muted">No tracked ATS keywords were detected.</span>}
               </div>
+              {rewriteRequest ? (
+                <section className="keyword-suggestion rewrite-target-picker">
+                  <div className="keyword-suggestion-heading">
+                    <span>
+                      <strong>Where should Scout use {rewriteRequest.keyword}?</strong>
+                      <small>Choose one passage and add context when the resume does not state the fact directly.</small>
+                    </span>
+                    <button className="button ghost small" type="button" onClick={() => setRewriteRequest(null)}>Cancel</button>
+                  </div>
+                  <label className="rewrite-target-field">
+                    <span>Rewrite target</span>
+                    <select
+                      value={rewriteRequest.targetValue}
+                      onChange={(event) => setRewriteRequest({ ...rewriteRequest, targetValue: event.target.value })}
+                    >
+                      {rewriteTargetOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="rewrite-target-field">
+                    <span>Optional truth note</span>
+                    <textarea
+                      value={rewriteRequest.userEvidence}
+                      onChange={(event) => setRewriteRequest({ ...rewriteRequest, userEvidence: event.target.value })}
+                      placeholder="Example: My last two products served B2B2C customers."
+                      maxLength={600}
+                    />
+                  </label>
+                  <button className="button small" type="button" onClick={() => void suggestKeywordRewrite()} disabled={addingKeyword !== null}>
+                    {addingKeyword ? <span className="spinner" aria-hidden="true" /> : null}
+                    Generate suggestion
+                  </button>
+                </section>
+              ) : null}
+              {keywordSuggestion ? (
+                <section className="keyword-suggestion" aria-live="polite">
+                  <div className="keyword-suggestion-heading">
+                    <span>
+                      <strong>Suggested experience rewrite</strong>
+                      <small>{keywordSuggestion.sectionTitle} · {keywordSuggestion.keyword}</small>
+                    </span>
+                    <button className="button ghost small" type="button" onClick={() => setKeywordSuggestion(null)}>Discard</button>
+                  </div>
+                  <div className="keyword-suggestion-copy original">
+                    <span>Original</span>
+                    <p>{keywordSuggestion.originalBullet}</p>
+                  </div>
+                  <div className="keyword-suggestion-copy proposed">
+                    <span>Proposed</span>
+                    <p>{keywordSuggestion.suggestedBullet}</p>
+                  </div>
+                  <p className="keyword-suggestion-reason">{keywordSuggestion.reason}</p>
+                  <button className="button small" type="button" onClick={() => void acceptKeywordRewrite()} disabled={addingKeyword !== null}>
+                    {addingKeyword ? <span className="spinner" aria-hidden="true" /> : null}
+                    Accept rewrite
+                  </button>
+                </section>
+              ) : null}
               {keywordNotice ? <p className="keyword-notice" role="status">{keywordNotice}</p> : null}
-              <p className="muted coverage-note">Use plus only when the skill is true and defensible. Scout places it in a relevant skill category. Review colors stay in this panel and never appear in the PDF.</p>
+              <p className="muted coverage-note">Use plus to choose the summary or a specific experience. Add a short truth note when the resume does not make the context explicit. Nothing changes until you accept the proposal.</p>
             </div>
           </section>
-          <section className="card job-description-panel">
+          {!embedded ? <section className="card job-description-panel">
             <div className="card-header"><div><h2>Job description</h2><p>{jobTitle} · {company}</p></div></div>
             <div className="card-body job-description">{jobDescription || "No job description was provided."}</div>
-          </section>
+          </section> : null}
         </aside>
       </div>
     </form>

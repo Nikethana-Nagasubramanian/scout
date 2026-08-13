@@ -97,8 +97,8 @@ export default async function SettingsPage() {
         </section>
 
         <section className="form-section">
-          <h2>Strict job eligibility</h2>
-          <p>These rules run before new jobs are saved and again whenever existing jobs are rescored. Unrelated titles and senior leadership roles are also excluded using the target roles in your candidate profile.</p>
+          <h2>Job eligibility</h2>
+          <p>Scout filters explicit contradictions. Missing or ambiguous details stay visible as Needs verification instead of disappearing.</p>
           <label className="check-label">
             <input type="checkbox" name="search_usa_only" defaultChecked={getSetting("search_usa_only", "1") === "1"} />
             Only include jobs explicitly located in or restricted to the United States
@@ -112,8 +112,12 @@ export default async function SettingsPage() {
               <label htmlFor="search_experience_max">Maximum experience level</label>
               <input id="search_experience_max" name="search_experience_max" type="number" min="0" max="20" defaultValue={getSetting("search_experience_max", "5")} />
             </div>
+            <div className="field">
+              <label htmlFor="search_max_age_days">Maximum posting age in days</label>
+              <input id="search_max_age_days" name="search_max_age_days" type="number" min="1" max="365" defaultValue={getSetting("search_max_age_days", "60")} />
+            </div>
           </div>
-          <p className="muted">Your current target seniority is managed in the Candidate profile. Set it to Mid level for this search.</p>
+          <p className="muted">Included titles: Product Designer, UI/UX Designer, and Design Engineer. Design Engineer requires digital product evidence in the job description. Senior Product Designer is included when the posting asks for five years or less.</p>
         </section>
 
         <section className="form-section">

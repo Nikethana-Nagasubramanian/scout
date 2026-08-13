@@ -17,7 +17,9 @@ interface CollectionRun {
   jobs_added: number;
   error_summary: string;
   eligible_jobs: number;
+  needs_verification_jobs: number;
   filtered_jobs: number;
+  relevant_jobs: number;
   id: number;
 }
 
@@ -29,16 +31,18 @@ export default function DashboardPage() {
   const profile = db.prepare("SELECT * FROM candidate_profile WHERE id = 1").get() as CandidateProfile;
   if (!profile.onboarding_complete) redirect("/onboarding");
 
-  const jobsToday = count("SELECT COUNT(*) AS count FROM jobs WHERE hard_filter_pass = 1 AND date(first_seen_at, 'localtime') = date('now', 'localtime')");
-  const queueCount = count(`SELECT COUNT(*) AS count FROM jobs WHERE hard_filter_pass = 1 AND score >= ${Number(getSetting("minimum_queue_score", "65"))} AND status NOT IN ('irrelevant', 'dismissed', 'archived')`);
+  const jobsToday = count("SELECT COUNT(*) AS count FROM jobs WHERE eligibility_status = 'eligible' AND date(first_seen_at, 'localtime') = date('now', 'localtime')");
+  const queueCount = count(`SELECT COUNT(*) AS count FROM jobs WHERE eligibility_status = 'eligible' AND score >= ${Number(getSetting("minimum_queue_score", "65"))} AND status NOT IN ('irrelevant', 'dismissed', 'archived')`);
   const appliedCount = count("SELECT COUNT(*) AS count FROM applications WHERE status NOT IN ('ready_to_apply', 'archived')");
   const interviewCount = count("SELECT COUNT(*) AS count FROM applications WHERE status IN ('recruiter_screen', 'interview', 'offer')");
   const followUpCount = count("SELECT COUNT(*) AS count FROM applications WHERE follow_up_at IS NOT NULL AND datetime(follow_up_at) <= datetime('now', '+1 day') AND status NOT IN ('rejected', 'withdrawn', 'offer', 'archived')");
-  const recentJobs = db.prepare("SELECT * FROM jobs WHERE hard_filter_pass = 1 AND status NOT IN ('irrelevant', 'dismissed', 'archived') ORDER BY first_seen_at DESC, score DESC LIMIT 6").all() as Job[];
+  const recentJobs = db.prepare("SELECT * FROM jobs WHERE eligibility_status = 'eligible' AND status NOT IN ('irrelevant', 'dismissed', 'archived') ORDER BY first_seen_at DESC, score DESC LIMIT 6").all() as Job[];
   const lastRun = db.prepare(`
     SELECT collection_runs.*,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND eligible = 1) AS eligible_jobs,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND eligible = 0) AS filtered_jobs
+      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'eligible') AS eligible_jobs,
+      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'needs_verification') AS needs_verification_jobs,
+      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'filtered') AS filtered_jobs
+      ,(SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id) AS relevant_jobs
     FROM collection_runs
     ORDER BY id DESC
     LIMIT 1
@@ -88,7 +92,7 @@ export default function DashboardPage() {
             {recentJobs.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Role</th><th>Fit</th><th>Status</th><th>Application</th><th /></tr></thead>
+                  <thead><tr><th>Role</th><th>Profile match</th><th>Status</th><th>Application</th><th /></tr></thead>
                   <tbody>
                     {recentJobs.map((job) => (
                       <tr key={job.id}>
@@ -112,8 +116,13 @@ export default function DashboardPage() {
             <div className="card-body">
               <p className="muted">Last completed</p>
               <strong>{formatDateTime(lastRun?.completed_at)}</strong>
-              {lastRun ? <p className="muted">{lastRun.jobs_found} fetched, {lastRun.jobs_added} new, {lastRun.eligible_jobs} passed, {lastRun.filtered_jobs} filtered</p> : <p className="muted">No collection has run yet.</p>}
-              {lastRun?.error_summary ? <p className="danger-text">{lastRun.error_summary}</p> : null}
+              {lastRun ? <p className="muted">{lastRun.relevant_jobs} relevant roles, {lastRun.jobs_added} new, {lastRun.eligible_jobs} eligible, {lastRun.needs_verification_jobs} need verification, {lastRun.filtered_jobs} filtered</p> : <p className="muted">No collection has run yet.</p>}
+              {lastRun?.error_summary ? (
+                <div className="source-health-note">
+                  <span className="status-dot" aria-hidden="true" />
+                  <div><strong>One source needs attention</strong><span>{lastRun.error_summary}</span></div>
+                </div>
+              ) : null}
               {lastRun ? <Link className="text-link" href={`/jobs?run=${lastRun.id}`}>View fetched jobs</Link> : null}
               <Link className="button secondary" href="/settings">Manage schedule</Link>
             </div>
