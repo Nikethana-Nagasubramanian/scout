@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { createApplicationAction, saveAndApproveResumeAction, saveResumeContentAction } from "@/app/actions";
+import { useEffect, useRef, useState } from "react";
+import { saveAndApproveResumeAction } from "@/app/actions";
 import type { ResumeBulletSuggestion, ResumeRewriteTarget } from "@/lib/local-ai";
+import {
+  appendResumeChange,
+  ensureResumeBlockIds,
+  newResumeBlockId,
+  removeResumeSection,
+  replaceResumeBlockText,
+  resumeBlockText,
+  stripResumeBulletPrefix,
+} from "@/lib/resume-blocks";
 import { flattenSkillCategories, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
 import type { ResumeContent } from "@/lib/types";
 
@@ -14,7 +23,6 @@ interface ResumeEditorProps {
   jobDescription: string;
   jobTitle: string;
   company: string;
-  applyUrl: string;
   applicationStatus: string | null;
   embedded?: boolean;
 }
@@ -59,6 +67,12 @@ function normalized(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function includesTerm(text: string, term: string): boolean {
+  const cleanText = ` ${normalized(text)} `;
+  const cleanTerm = normalized(term);
+  return Boolean(cleanTerm) && cleanText.includes(` ${cleanTerm} `);
+}
+
 export function ResumeEditor({
   resumeId,
   resumeStatus,
@@ -67,35 +81,82 @@ export function ResumeEditor({
   jobDescription,
   jobTitle,
   company,
-  applyUrl,
   applicationStatus,
   embedded = false,
 }: ResumeEditorProps) {
-  const [content, setContent] = useState<ResumeContent>({
+  const [content, setContent] = useState<ResumeContent>(ensureResumeBlockIds({
     ...initialContent,
     skills: normalizeResumeSkills(initialContent.skills),
     skillCategories: resumeSkillCategories(initialContent, jobDescription),
     sections: initialContent.sections || [],
-  });
-  const [view, setView] = useState<"pdf" | "edit">("pdf");
+  }));
+  const [view, setView] = useState<"guided" | "edit">("guided");
+  const [rightRailView, setRightRailView] = useState<"suggestions" | "keywords">("suggestions");
   const [addingKeyword, setAddingKeyword] = useState<string | null>(null);
   const [keywordNotice, setKeywordNotice] = useState("");
   const [keywordSuggestion, setKeywordSuggestion] = useState<ResumeBulletSuggestion | null>(null);
   const [rewriteRequest, setRewriteRequest] = useState<RewriteRequest | null>(null);
-  const [pdfVersion, setPdfVersion] = useState(0);
-  const resumeText = normalized([
+  const [guidedSuggestions, setGuidedSuggestions] = useState<ResumeBulletSuggestion[]>([]);
+  const [guidedDrafts, setGuidedDrafts] = useState<Record<string, string>>({});
+  const [guidedLoading, setGuidedLoading] = useState(true);
+  const [guidedNotice, setGuidedNotice] = useState("");
+  const [editingPaperSection, setEditingPaperSection] = useState<string | null>(null);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+  const [refiningSuggestionId, setRefiningSuggestionId] = useState<string | null>(null);
+  const requestedGuidance = useRef(false);
+  const inspectorDraftRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (requestedGuidance.current) return;
+    requestedGuidance.current = true;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/resumes/${resumeId}/proactive-suggestions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        const result = await response.json() as {
+          content?: ResumeContent;
+          suggestions?: ResumeBulletSuggestion[];
+          failures?: string[];
+          error?: string;
+        };
+        if (!response.ok) throw new Error(result.error || "Scout could not find resume improvements");
+        const nextContent = result.content ? ensureResumeBlockIds(result.content) : content;
+        const suggestions = (result.suggestions || []).slice(0, 3);
+        setContent(nextContent);
+        setGuidedSuggestions(suggestions);
+        setGuidedDrafts(Object.fromEntries(suggestions.map((suggestion) => [suggestion.blockId || "", suggestion.suggestedBullet])));
+        if (!suggestions.length) {
+          const localAiUnavailable = result.failures?.some((failure) => /fetch failed|ollama/i.test(failure));
+          setGuidedNotice(localAiUnavailable
+            ? "Local AI is unavailable. Scout checked its safe terminology rules but did not find another defensible improvement. Your resume remains unchanged."
+            : result.failures?.[0] || "Scout did not find a defensible improvement for this job. Your resume remains unchanged.");
+        }
+      } catch (error) {
+        setGuidedNotice(error instanceof Error ? error.message : "Scout could not find resume improvements");
+      } finally {
+        setGuidedLoading(false);
+      }
+    })();
+  }, [content, resumeId]);
+
+  const resumeText = [
     content.summary,
     content.skills.join(" "),
     ...(content.sections || []).flatMap((section) => section.lines.map((line) => line.text)),
-  ].join(" "));
-  const jobText = normalized(jobDescription);
-  const relevantKeywords = [...new Set([...atsKeywords, ...content.skills])]
-    .filter((keyword) => jobText.includes(normalized(keyword)));
+  ].join(" ");
+  const keywordCandidates = [...atsKeywords, ...content.skills];
+  const relevantKeywords = [...new Map(keywordCandidates
+    .filter((keyword) => includesTerm(jobDescription, keyword))
+    .map((keyword) => [normalized(keyword), keyword])).values()]
+    .sort((left, right) => normalized(jobDescription).indexOf(normalized(left)) - normalized(jobDescription).indexOf(normalized(right)));
   const keywordAnalysis = relevantKeywords.map((keyword) => {
     const cleanKeyword = normalized(keyword);
-    if (resumeText.includes(cleanKeyword)) return { keyword, status: "present" as const };
+    if (includesTerm(resumeText, cleanKeyword)) return { keyword, status: "present" as const };
     const tokens = cleanKeyword.split(" ").filter((token) => token.length > 2);
-    if (tokens.length > 1 && tokens.some((token) => resumeText.includes(token))) return { keyword, status: "partial" as const };
+    if (tokens.length > 1 && tokens.some((token) => includesTerm(resumeText, token))) return { keyword, status: "partial" as const };
     return { keyword, status: "missing" as const };
   });
   const presentCount = keywordAnalysis.filter((item) => item.status === "present").length;
@@ -141,10 +202,10 @@ export function ResumeEditor({
       ? {
           ...section,
           lines: afterIndex === undefined
-            ? [...section.lines, { text: "", kind }]
+            ? [...section.lines, { id: newResumeBlockId("line"), text: "", kind }]
             : [
                 ...section.lines.slice(0, afterIndex + 1),
-                { text: "", kind },
+                { id: newResumeBlockId("line"), text: "", kind },
                 ...section.lines.slice(afterIndex + 1),
               ],
         }
@@ -157,6 +218,10 @@ export function ResumeEditor({
       ? { ...section, lines: section.lines.filter((_, currentLineIndex) => currentLineIndex !== lineIndex) }
       : section);
     setContent({ ...content, sections });
+  }
+
+  function deleteSection(sectionId: string): void {
+    setContent(removeResumeSection(content, sectionId));
   }
 
   function updateSkillCategory(index: number, field: "name" | "skills", value: string): void {
@@ -322,8 +387,8 @@ export function ResumeEditor({
       setContent(result.content);
       setKeywordNotice(`${keywordSuggestion.keyword} was added to an existing achievement after your approval.`);
       setKeywordSuggestion(null);
-      setPdfVersion((version) => version + 1);
-      setView("pdf");
+      setView("guided");
+      setRightRailView("suggestions");
     } catch (error) {
       setKeywordNotice(error instanceof Error ? error.message : "The rewrite could not be saved");
     } finally {
@@ -331,8 +396,151 @@ export function ResumeEditor({
     }
   }
 
+  async function persistGuidedContent(nextContent: ResumeContent): Promise<ResumeContent> {
+    const response = await fetch(`/api/resumes/${resumeId}/suggestion`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: nextContent }),
+    });
+    const result = await response.json() as { content?: ResumeContent; error?: string };
+    if (!response.ok || !result.content) throw new Error(result.error || "The resume change could not be saved");
+    return ensureResumeBlockIds(result.content);
+  }
+
+  async function acceptGuidedSuggestion(suggestion: ResumeBulletSuggestion): Promise<void> {
+    const blockId = suggestion.blockId || (suggestion.targetKind === "summary"
+      ? content.summaryBlockId
+      : content.sections?.[suggestion.sectionIndex]?.lines[suggestion.lineIndex]?.id);
+    if (!blockId) {
+      setGuidedNotice("Scout could not identify the resume passage. Reload the page and try again.");
+      return;
+    }
+    const currentText = resumeBlockText(content, blockId);
+    if (currentText !== suggestion.originalBullet) {
+      setGuidedNotice("This passage changed after Scout created the suggestion. Reload to generate a fresh version.");
+      return;
+    }
+    const acceptedText = (guidedDrafts[blockId] || suggestion.suggestedBullet).replace(/\u2014/g, "-").trim();
+    if (!acceptedText) {
+      setGuidedNotice("The suggested passage cannot be empty.");
+      return;
+    }
+    const normalizedKeyword = normalized(suggestion.keyword);
+    let nextContent = replaceResumeBlockText(content, blockId, acceptedText);
+    nextContent = appendResumeChange(nextContent, {
+      id: newResumeBlockId("change"),
+      blockId,
+      keyword: suggestion.keyword,
+      originalText: suggestion.originalBullet,
+      acceptedText,
+      createdAt: new Date().toISOString(),
+      source: "guided",
+    });
+    nextContent = {
+      ...nextContent,
+      highlightedKeywords: [
+        ...(nextContent.highlightedKeywords || []).filter((item) => normalized(item) !== normalizedKeyword),
+        suggestion.keyword,
+      ],
+      audit: {
+        ...nextContent.audit,
+        includedKeywords: [
+          ...nextContent.audit.includedKeywords.filter((item) => normalized(item) !== normalizedKeyword),
+          suggestion.keyword,
+        ],
+        unsupportedKeywords: nextContent.audit.unsupportedKeywords.filter((item) => normalized(item) !== normalizedKeyword),
+      },
+    };
+    setAddingKeyword(suggestion.keyword);
+    setGuidedNotice("");
+    try {
+      const saved = await persistGuidedContent(nextContent);
+      setContent(saved);
+      setGuidedSuggestions((items) => items.filter((item) => item.blockId !== blockId));
+      setRefiningSuggestionId(null);
+      setGuidedNotice(`${suggestion.keyword} was accepted for this job-specific resume. Your base resume was not changed.`);
+    } catch (error) {
+      setGuidedNotice(error instanceof Error ? error.message : "The resume change could not be saved");
+    } finally {
+      setAddingKeyword(null);
+    }
+  }
+
+  function keepOriginal(suggestion: ResumeBulletSuggestion): void {
+    setGuidedSuggestions((items) => items.filter((item) => item.blockId !== suggestion.blockId));
+    setRefiningSuggestionId(null);
+    setGuidedNotice(`Kept the original passage. ${suggestion.keyword} was not added.`);
+  }
+
+  function guidedSuggestionFor(blockId: string | undefined, presentation: "card" | "experience" = "card") {
+    if (!blockId) return null;
+    const suggestion = guidedSuggestions.find((item) => item.blockId === blockId);
+    if (!suggestion) return null;
+    if (presentation === "experience") {
+      const suggestionNumber = guidedSuggestions.findIndex((item) => item.blockId === blockId) + 1;
+      const isActive = guidedSuggestions[activeSuggestionIndex]?.blockId === blockId;
+      return (
+        <section
+          className={`experience-suggestion${isActive ? " active" : ""}`}
+          aria-live="polite"
+          onClick={() => setActiveSuggestionIndex(Math.max(0, suggestionNumber - 1))}
+        >
+          <p className="experience-suggestion-label">Suggestion {suggestionNumber}</p>
+          <div className="experience-suggestion-copy original">
+            <span aria-hidden="true">•</span>
+            <p>{stripResumeBulletPrefix(suggestion.originalBullet)}</p>
+          </div>
+          <div className="experience-suggestion-copy proposed">
+            <span aria-hidden="true">•</span>
+            <p>{guidedDrafts[blockId] || suggestion.suggestedBullet}</p>
+          </div>
+        </section>
+      );
+    }
+    return (
+      <section className="guided-suggestion" aria-live="polite">
+        <div className="guided-suggestion-heading">
+          <span><strong>Suggested improvement</strong> <small>Verified resume evidence</small></span>
+          <span className="guided-keyword">{suggestion.keyword}</span>
+        </div>
+        <textarea
+          value={guidedDrafts[blockId] || suggestion.suggestedBullet}
+          onChange={(event) => setGuidedDrafts({ ...guidedDrafts, [blockId]: event.target.value })}
+          aria-label={`Edit the suggested ${suggestion.keyword} passage`}
+        />
+        <p>{suggestion.reason}</p>
+        <div className="guided-suggestion-actions">
+          <button className="button small" type="button" onClick={() => void acceptGuidedSuggestion(suggestion)} disabled={addingKeyword !== null}>
+            {addingKeyword === suggestion.keyword ? <span className="spinner" aria-hidden="true" /> : null}
+            Accept
+          </button>
+          <button className="button secondary small" type="button" onClick={() => keepOriginal(suggestion)}>Keep original</button>
+        </div>
+      </section>
+    );
+  }
+
+  const effectiveSuggestionIndex = guidedSuggestions.length ? Math.min(activeSuggestionIndex, guidedSuggestions.length - 1) : 0;
+  const activeSuggestion = guidedSuggestions[effectiveSuggestionIndex] || null;
+  const activeSuggestionBlockId = activeSuggestion?.blockId || "";
+  const activeEvidenceCount = Math.max(1, activeSuggestion?.evidenceFactIds?.length || 0);
+
+  function moveSuggestion(direction: -1 | 1): void {
+    if (!guidedSuggestions.length) return;
+    setRefiningSuggestionId(null);
+    setActiveSuggestionIndex((index) => (index + direction + guidedSuggestions.length) % guidedSuggestions.length);
+  }
+
+  function focusInspectorDraft(): void {
+    setRefiningSuggestionId(activeSuggestionBlockId);
+    window.requestAnimationFrame(() => {
+      inspectorDraftRef.current?.focus();
+      inspectorDraftRef.current?.select();
+    });
+  }
+
   return (
-    <form action={saveResumeContentAction} className={`resume-workspace${embedded ? " embedded" : ""}`}>
+    <form id={`resume-editor-${resumeId}`} action={saveAndApproveResumeAction} className={`resume-workspace${embedded ? " embedded" : ""}`}>
       <input type="hidden" name="id" value={resumeId} />
       <input type="hidden" name="job_id" value={jobId} />
       <input type="hidden" name="resume_id" value={resumeId} />
@@ -345,29 +553,209 @@ export function ResumeEditor({
           </li>
         ))}
       </ol> : null}
-      <div className="editor-toolbar">
+      <div className={`editor-toolbar${embedded ? " embedded-toolbar" : ""}`}>
         <div className="view-switcher" aria-label="Resume view">
-          <button className={view === "pdf" ? "button small" : "button ghost small"} type="button" onClick={() => setView("pdf")}>PDF preview</button>
+          <button className={view === "guided" ? "button small" : "button ghost small"} type="button" onClick={() => setView("guided")}>Guided edit</button>
           <button className={view === "edit" ? "button small" : "button ghost small"} type="button" onClick={() => setView("edit")}>Edit inline</button>
         </div>
         <div className="inline-actions">
-          <button className="button secondary" type="submit">{resumeApproved ? "Save changes for review" : "Save and preview"}</button>
-          {!resumeApproved ? <button className="button" type="submit" formAction={saveAndApproveResumeAction}>Save and approve</button> : null}
-          <a className="button secondary" href={`/api/resumes/${resumeId}/pdf`}>Download PDF</a>
-          {resumeApproved && applyUrl && !applicationRecorded ? <a className="button" href={applyUrl} target="_blank" rel="noreferrer">Open application</a> : null}
-          {resumeApproved && !applicationRecorded ? <button className="button secondary" type="submit" formAction={createApplicationAction}>Mark applied</button> : null}
-          {applicationRecorded ? <a className="button" href="/applications">View tracked application</a> : null}
+          <button className="button" type="submit" formAction={saveAndApproveResumeAction}>Approve resume</button>
         </div>
       </div>
 
       <div className="resume-editor-grid">
         <div className="resume-document-column">
-          {view === "pdf" ? (
-            <iframe
-              className="resume-pdf-frame"
-              src={`/api/resumes/${resumeId}/pdf?preview=1&v=${pdfVersion}`}
-              title={`${content.candidateName} resume PDF preview`}
-            />
+          {view === "guided" ? (
+            <section className="guided-resume-editor">
+              <div className="guided-editor-intro">
+                <div>
+                  <h2>Job-specific resume</h2>
+                  <p>Scout suggests up to three defensible improvements. Nothing changes until you accept.</p>
+                </div>
+                {guidedLoading ? <span className="guided-loading"><span className="spinner" aria-hidden="true" /> Finding improvements</span> : null}
+              </div>
+              <div className="guided-resume-header">
+                <input
+                  className="guided-resume-name"
+                  value={content.candidateName}
+                  onChange={(event) => setContent({ ...content, candidateName: event.target.value })}
+                  aria-label="Candidate name"
+                />
+                <input
+                  className="guided-resume-contact"
+                  value={content.contactLine}
+                  onChange={(event) => setContent({ ...content, contactLine: event.target.value })}
+                  aria-label="Contact line"
+                />
+              </div>
+              <div className="guided-resume-section">
+                <div className="paper-section-heading">
+                  <h2>Summary</h2>
+                  <button
+                    className={`paper-edit-button${editingPaperSection === "summary" ? " active" : ""}`}
+                    type="button"
+                    onClick={() => setEditingPaperSection(editingPaperSection === "summary" ? null : "summary")}
+                    aria-label={editingPaperSection === "summary" ? "Finish editing summary" : "Edit summary"}
+                    aria-pressed={editingPaperSection === "summary"}
+                  >
+                    {editingPaperSection === "summary" ? "Done" : <span className="paper-edit-icon" aria-hidden="true" />}
+                  </button>
+                </div>
+                {editingPaperSection === "summary" ? (
+                  <textarea
+                    className="paper-summary-editor"
+                    value={content.summary}
+                    onChange={(event) => setContent({ ...content, summary: event.target.value })}
+                    aria-label="Professional summary"
+                  />
+                ) : <p className="paper-summary-copy">{content.summary}</p>}
+                {guidedSuggestionFor(content.summaryBlockId, "experience")}
+              </div>
+              <div className="guided-resume-section">
+                <div className="paper-section-heading">
+                  <h2>Skills</h2>
+                  <button
+                    className={`paper-edit-button${editingPaperSection === "skills" ? " active" : ""}`}
+                    type="button"
+                    onClick={() => setEditingPaperSection(editingPaperSection === "skills" ? null : "skills")}
+                    aria-label={editingPaperSection === "skills" ? "Finish editing skills" : "Edit skills"}
+                    aria-pressed={editingPaperSection === "skills"}
+                  >
+                    {editingPaperSection === "skills" ? "Done" : <span className="paper-edit-icon" aria-hidden="true" />}
+                  </button>
+                </div>
+                {editingPaperSection === "skills" ? (
+                  <div className="paper-skill-editor">
+                    {(content.skillCategories || []).map((category, categoryIndex) => (
+                      <div className="paper-skill-editor-row" key={`${category.name}-${categoryIndex}`}>
+                        <input
+                          value={category.name}
+                          onChange={(event) => updateSkillCategory(categoryIndex, "name", event.target.value)}
+                          aria-label={`Skill category ${categoryIndex + 1}`}
+                        />
+                        <textarea
+                          value={category.skills.join(", ")}
+                          onChange={(event) => updateSkillCategory(categoryIndex, "skills", event.target.value)}
+                          aria-label={`${category.name} skills`}
+                        />
+                      </div>
+                    ))}
+                    <button className="button ghost small" type="button" onClick={addSkillCategory}>Add skill category</button>
+                  </div>
+                ) : (content.skillCategories || []).map((category, categoryIndex) => (
+                  <p className="guided-skill-row" key={`${category.name}-${categoryIndex}`}>
+                    <strong>{category.name}:</strong> {category.skills.join(", ")}
+                  </p>
+                ))}
+              </div>
+              {(content.sections || []).map((section, sectionIndex) => {
+                const isExperience = /experience/i.test(section.title);
+                const sectionKey = section.id || `${section.title}-${sectionIndex}`;
+                const isEditingSection = editingPaperSection === sectionKey;
+                if (isExperience) {
+                  return (
+                    <section className="guided-resume-section guided-experience-section" key={sectionKey}>
+                      <div className="experience-section-heading">
+                        <h2>Experience</h2>
+                        <button
+                          className={`experience-edit-button${isEditingSection ? " active" : ""}`}
+                          type="button"
+                          onClick={() => setEditingPaperSection(isEditingSection ? null : sectionKey)}
+                          aria-pressed={isEditingSection}
+                        >
+                          {isEditingSection ? "Done" : <span className="paper-edit-icon" aria-hidden="true" />}
+                        </button>
+                      </div>
+                      {isEditingSection ? (
+                        <div className="experience-section-editing">
+                          <button className="danger-text resume-section-delete" type="button" onClick={() => deleteSection(section.id || "")}>Delete section</button>
+                          {section.lines.map((line, lineIndex) => line.kind === "divider" ? (
+                            <hr key={line.id || lineIndex} />
+                          ) : (
+                            <div className={`guided-resume-line ${line.kind}`} key={line.id || lineIndex}>
+                              {line.kind === "bullet" ? <span aria-hidden="true">•</span> : null}
+                              <textarea
+                                value={line.text}
+                                onChange={(event) => updateSectionLine(sectionIndex, lineIndex, event.target.value)}
+                                aria-label={`${section.title} line ${lineIndex + 1}`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="experience-entry-list">
+                          {section.lines.map((line, lineIndex) => line.kind === "divider" ? (
+                            <hr key={line.id || lineIndex} />
+                          ) : line.kind === "entry" ? (
+                            <h3 className="experience-role-heading" key={line.id || lineIndex}>{line.text}</h3>
+                          ) : line.kind === "bullet" ? (
+                            <div className="experience-bullet-block" key={line.id || lineIndex}>
+                              {guidedSuggestionFor(line.id, "experience") || (
+                                <div className="experience-bullet-copy">
+                                  <span aria-hidden="true">•</span>
+                                  <p>{stripResumeBulletPrefix(line.text)}</p>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="experience-supporting-copy" key={line.id || lineIndex}>{line.text}</p>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                }
+                return (
+                  <section className="guided-resume-section guided-supporting-section" key={sectionKey}>
+                    <div className="paper-section-heading">
+                      <h2>{section.title}</h2>
+                      <button
+                        className={`paper-edit-button${isEditingSection ? " active" : ""}`}
+                        type="button"
+                        onClick={() => setEditingPaperSection(isEditingSection ? null : sectionKey)}
+                        aria-label={isEditingSection ? `Finish editing ${section.title}` : `Edit ${section.title}`}
+                        aria-pressed={isEditingSection}
+                      >
+                        {isEditingSection ? "Done" : <span className="paper-edit-icon" aria-hidden="true" />}
+                      </button>
+                    </div>
+                    {isEditingSection ? (
+                      <div className="supporting-section-editor">
+                        <button className="danger-text resume-section-delete" type="button" onClick={() => deleteSection(section.id || "")}>Delete section</button>
+                        {section.lines.map((line, lineIndex) => line.kind === "divider" ? (
+                          <hr key={line.id || lineIndex} />
+                        ) : (
+                          <div className={`guided-resume-line ${line.kind}`} key={line.id || lineIndex}>
+                            {line.kind === "bullet" ? <span aria-hidden="true">•</span> : null}
+                            <textarea
+                              value={line.text}
+                              onChange={(event) => updateSectionLine(sectionIndex, lineIndex, event.target.value)}
+                              aria-label={`${section.title} line ${lineIndex + 1}`}
+                            />
+                            {guidedSuggestionFor(line.id)}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="supporting-section-content">
+                        {section.lines.map((line, lineIndex) => line.kind === "divider" ? (
+                          <hr key={line.id || lineIndex} />
+                        ) : line.kind === "entry" ? (
+                          <p className="supporting-entry" key={line.id || lineIndex}>{line.text}</p>
+                        ) : line.kind === "bullet" ? (
+                          <div className="experience-bullet-copy" key={line.id || lineIndex}>
+                            <span aria-hidden="true">•</span>
+                            <p>{stripResumeBulletPrefix(line.text)}</p>
+                          </div>
+                        ) : (
+                          <p key={line.id || lineIndex}>{line.text}</p>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </section>
           ) : (
             <section className="resume-preview resume-editor-sheet">
               <input
@@ -420,16 +808,19 @@ export function ResumeEditor({
               </div>
 
               {(content.sections || []).map((section, sectionIndex) => (
-                <div className="resume-edit-section" key={`${section.title}-${sectionIndex}`}>
-                  <input
-                    className="resume-inline-heading"
-                    value={section.title}
-                    onChange={(event) => {
-                      const sections = (content.sections || []).map((item, index) => index === sectionIndex ? { ...item, title: event.target.value } : item);
-                      setContent({ ...content, sections });
-                    }}
-                    aria-label={`Section ${sectionIndex + 1} heading`}
-                  />
+                <div className="resume-edit-section" key={section.id || `${section.title}-${sectionIndex}`}>
+                  <div className="resume-section-heading-row">
+                    <input
+                      className="resume-inline-heading"
+                      value={section.title}
+                      onChange={(event) => {
+                        const sections = (content.sections || []).map((item, index) => index === sectionIndex ? { ...item, title: event.target.value } : item);
+                        setContent({ ...content, sections });
+                      }}
+                      aria-label={`Section ${sectionIndex + 1} heading`}
+                    />
+                    <button className="danger-text resume-section-delete" type="button" onClick={() => deleteSection(section.id || "")}>Delete section</button>
+                  </div>
                   {section.lines.map((line, lineIndex) => (
                     <div className={`resume-line-editor ${line.kind}`} key={`${sectionIndex}-${lineIndex}`}>
                       <div className="line-format-toolbar">
@@ -480,29 +871,108 @@ export function ResumeEditor({
         </div>
 
         <aside className="resume-reference-column">
+          <div className="resume-rail-switcher" role="group" aria-label="Resume guidance">
+            <button className={rightRailView === "suggestions" ? "active" : ""} type="button" onClick={() => setRightRailView("suggestions")}>
+              Suggested edits <span>{guidedSuggestions.length}</span>
+            </button>
+            <button className={rightRailView === "keywords" ? "active" : ""} type="button" onClick={() => setRightRailView("keywords")}>
+              ATS keywords <span>{coverage}%</span>
+            </button>
+          </div>
+          {rightRailView === "suggestions" ? (
+            <section className="suggestion-inspector" data-stack-count={Math.min(3, guidedSuggestions.length)} aria-live="polite">
+              <div className="suggestion-inspector-inner">
+                <header className="suggestion-inspector-header">
+                  <h2>Scout suggests {guidedSuggestions.length} {guidedSuggestions.length === 1 ? "edit" : "edits"}</h2>
+                  <div className="suggestion-nav-actions">
+                    <button type="button" onClick={() => moveSuggestion(-1)} disabled={guidedSuggestions.length < 2} aria-label="Previous suggestion">
+                      <span className="suggestion-chevron previous" aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={() => moveSuggestion(1)} disabled={guidedSuggestions.length < 2} aria-label="Next suggestion">
+                      <span className="suggestion-chevron next" aria-hidden="true" />
+                    </button>
+                  </div>
+                </header>
+                {guidedLoading ? (
+                  <div className="suggestion-inspector-empty"><span className="spinner" aria-hidden="true" /> Scout is finding defensible edits.</div>
+                ) : activeSuggestion ? (
+                  <>
+                    <section className="inspector-comparison">
+                      <p className="inspector-label">Suggestion {effectiveSuggestionIndex + 1}</p>
+                      <div className="inspector-copy original"><span aria-hidden="true">•</span><p>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</p></div>
+                      <label className="inspector-copy proposed">
+                        <span aria-hidden="true">•</span>
+                        {refiningSuggestionId === activeSuggestionBlockId ? (
+                          <textarea
+                            ref={inspectorDraftRef}
+                            value={guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}
+                            onChange={(event) => setGuidedDrafts({ ...guidedDrafts, [activeSuggestionBlockId]: event.target.value })}
+                            aria-label={`Refine suggestion ${effectiveSuggestionIndex + 1}`}
+                          />
+                        ) : (
+                          <p>{guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}</p>
+                        )}
+                      </label>
+                    </section>
+                    <section className="inspector-note">
+                      <div className="inspector-meta-heading"><span className="inspector-note-icon" aria-hidden="true" /><h3>Scout&apos;s note</h3></div>
+                      <p>{activeSuggestion.reason}</p>
+                    </section>
+                    <section className="inspector-evidence">
+                      <div className="inspector-meta-heading"><span className="inspector-evidence-icon" aria-hidden="true" /><h3>Scout&apos;s evidence · {activeEvidenceCount} {activeEvidenceCount === 1 ? "source" : "sources"}</h3></div>
+                      <p>Confirmed in the resume evidence used for this job-specific edit.</p>
+                      <blockquote>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</blockquote>
+                    </section>
+                    <footer className="suggestion-inspector-actions">
+                      <button type="button" className="inspector-action keep" onClick={() => keepOriginal(activeSuggestion)}>Keep original</button>
+                      <button type="button" className="inspector-action refine" onClick={focusInspectorDraft}>Refine</button>
+                      <button type="button" className="inspector-action accept" onClick={() => void acceptGuidedSuggestion(activeSuggestion)} disabled={addingKeyword !== null}>
+                        {addingKeyword === activeSuggestion.keyword ? <span className="spinner" aria-hidden="true" /> : null}
+                        Accept change
+                      </button>
+                    </footer>
+                  </>
+                ) : (
+                  <div className="suggestion-inspector-empty">
+                    <strong>No pending edits</strong>
+                    <span>{guidedNotice || "Scout did not find another defensible change for this resume."}</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : (
           <section className="card ats-analysis">
-            <div className="card-header"><div><h2>Resume coverage</h2><p>Compared with this job description</p></div><strong className="coverage-score">{coverage}%</strong></div>
+            <div className="card-header"><div><h2>ATS keywords</h2><p>Job requirements compared with this resume</p></div><strong className="coverage-score">{coverage}%</strong></div>
             <div className="card-body">
               <div className="coverage-legend"><span className="coverage-key present">Present</span><span className="coverage-key partial">Partial</span><span className="coverage-key missing">Missing</span></div>
-              <div className="keyword-grid">
-                {keywordAnalysis.length ? keywordAnalysis.map((item) => (
-                  <span className={`keyword-status ${item.status} ${item.status === "missing" ? "addable" : ""}`} key={item.keyword}>
-                    {item.keyword}
-                    {item.status === "missing" ? (
-                      <button
-                        type="button"
-                        className="keyword-add"
-                        onClick={() => beginKeywordRewrite(item.keyword)}
-                        disabled={addingKeyword !== null}
-                        aria-label={`Suggest an experience rewrite for ${item.keyword}`}
-                        title={`Suggest a truthful bullet rewrite for ${item.keyword}`}
-                      >
-                        {addingKeyword === item.keyword ? <span className="spinner" aria-hidden="true" /> : "+"}
-                      </button>
-                    ) : null}
-                  </span>
-                )) : <span className="muted">No tracked ATS keywords were detected.</span>}
-              </div>
+              {keywordAnalysis.length ? (["missing", "partial", "present"] as const).map((status) => {
+                const items = keywordAnalysis.filter((item) => item.status === status);
+                if (!items.length) return null;
+                return (
+                  <section className="keyword-group" key={status}>
+                    <div className="keyword-group-heading"><strong>{status}</strong><span>{items.length}</span></div>
+                    <div className="keyword-grid">
+                      {items.map((item) => (
+                        <span className={`keyword-status ${item.status} ${item.status === "missing" ? "addable" : ""}`} key={item.keyword}>
+                          {item.keyword}
+                          {item.status === "missing" ? (
+                            <button
+                              type="button"
+                              className="keyword-add"
+                              onClick={() => beginKeywordRewrite(item.keyword)}
+                              disabled={addingKeyword !== null}
+                              aria-label={`Suggest a truthful resume rewrite for ${item.keyword}`}
+                              title={`Suggest a truthful resume rewrite for ${item.keyword}`}
+                            >
+                              {addingKeyword === item.keyword ? <span className="spinner" aria-hidden="true" /> : "+"}
+                            </button>
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                );
+              }) : <span className="muted">Scout did not detect tracked requirements in this job description.</span>}
               {rewriteRequest ? (
                 <section className="keyword-suggestion rewrite-target-picker">
                   <div className="keyword-suggestion-heading">
@@ -561,9 +1031,32 @@ export function ResumeEditor({
                 </section>
               ) : null}
               {keywordNotice ? <p className="keyword-notice" role="status">{keywordNotice}</p> : null}
-              <p className="muted coverage-note">Use plus to choose the summary or a specific experience. Add a short truth note when the resume does not make the context explicit. Nothing changes until you accept the proposal.</p>
+              <p className="muted coverage-note">Missing keywords are not added automatically. Use plus to choose the summary or a specific experience, then review the evidence-bound rewrite before accepting it.</p>
             </div>
           </section>
+          )}
+          {(content.changeHistory || []).length ? (
+            <section className="card resume-change-log">
+              <div className="card-header">
+                <div>
+                  <h2>Resume changes implemented</h2>
+                  <p>Accepted changes in this job-specific resume</p>
+                </div>
+                <strong>{content.changeHistory?.length}</strong>
+              </div>
+              <div className="card-body resume-change-list">
+                {[...(content.changeHistory || [])].reverse().map((change) => (
+                  <article key={change.id}>
+                    <div>
+                      <strong>{change.keyword}</strong>
+                      <small>Accepted</small>
+                    </div>
+                    <p>{stripResumeBulletPrefix(change.acceptedText)}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {!embedded ? <section className="card job-description-panel">
             <div className="card-header"><div><h2>Job description</h2><p>{jobTitle} · {company}</p></div></div>
             <div className="card-body job-description">{jobDescription || "No job description was provided."}</div>

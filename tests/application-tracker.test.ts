@@ -13,6 +13,7 @@ describe("partitionTrackedApplications", () => {
       { id: 7, status: "ineligible" },
       { id: 8, status: "archived" },
       { id: 9, status: "ready_to_apply" },
+      { id: 10, status: "preparing" },
     ]);
 
     expect(result.activeApplications.map((application) => application.id)).toEqual([1, 3]);

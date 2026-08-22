@@ -2,7 +2,6 @@ import Link from "next/link";
 import { createApplicationAction, generateResumeAction, updateJobStatusAction, updateResumeStatusAction } from "@/app/actions";
 import { ConfidenceBadge, EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
-import { CoverLetterEditor } from "@/components/CoverLetterEditor";
 import { db, getSetting } from "@/lib/database";
 import { partitionResumeQueue } from "@/lib/resume-queue";
 import { resumeSkillCategories } from "@/lib/resume-skills";
@@ -25,10 +24,6 @@ interface ResumeRow {
   description: string;
   application_status: string | null;
   application_id: number | null;
-  cover_letter_content: string | null;
-  cover_letter_method: string | null;
-  cover_letter_status: string | null;
-  cover_letter_candidate_note: string | null;
   is_latest: number;
 }
 
@@ -62,27 +57,21 @@ function ResumeVersionCard({ resume, isLatest, openByDefault = isLatest }: { res
             </div>
             <div className="inline-actions">
               <form action={generateResumeAction}><input type="hidden" name="job_id" value={resume.job_id} /><ResumeSubmitButton className="button secondary small">Regenerate</ResumeSubmitButton></form>
-              <form action={updateResumeStatusAction}><input type="hidden" name="id" value={resume.id} /><input type="hidden" name="status" value="approved" /><button className="button small" type="submit">Approve</button></form>
+              {resume.status !== "approved" && resume.status !== "rejected" ? (
+                <form action={updateResumeStatusAction}><input type="hidden" name="id" value={resume.id} /><input type="hidden" name="status" value="approved" /><button className="button small" type="submit">Approve</button></form>
+              ) : null}
               {resume.status === "rejected" ? (
                 <form action={updateResumeStatusAction}><input type="hidden" name="id" value={resume.id} /><input type="hidden" name="status" value="draft" /><button className="button secondary small" type="submit">Restore to pending</button></form>
               ) : (
                 <>
-                  <form action={updateResumeStatusAction}><input type="hidden" name="id" value={resume.id} /><input type="hidden" name="status" value="rejected" /><button className="button danger small" type="submit">Reject</button></form>
+                  {resume.status !== "approved" ? (
+                    <form action={updateResumeStatusAction}><input type="hidden" name="id" value={resume.id} /><input type="hidden" name="status" value="rejected" /><button className="button danger small" type="submit">Reject</button></form>
+                  ) : null}
                   <form action={createApplicationAction}><input type="hidden" name="job_id" value={resume.job_id} /><input type="hidden" name="resume_id" value={resume.id} /><button className="button secondary small" type="submit">Mark applied</button></form>
                 </>
               )}
             </div>
           </div>
-        ) : null}
-        {isLatest && resume.status === "approved" && resume.application_id ? (
-          <CoverLetterEditor
-            applicationId={resume.application_id}
-            company={resume.company}
-            initialCandidateNote={resume.cover_letter_candidate_note || ""}
-            initialContent={resume.cover_letter_content || ""}
-            initialMethod={resume.cover_letter_method || ""}
-            initialStatus={resume.cover_letter_status || "not_started"}
-          />
         ) : null}
         <p className="muted version-change-summary">{resume.change_summary}</p>
         {!content.sections?.length ? <div className="callout warning"><strong>Legacy draft:</strong> regenerate this resume to use the new ATS-safe structure and inline editor.</div> : null}
@@ -135,10 +124,6 @@ export default function QueuePage() {
     SELECT resume_versions.*, jobs.title, jobs.company, jobs.score, jobs.apply_url, jobs.description,
       applications.id AS application_id,
       applications.status AS application_status,
-      cover_letters.content AS cover_letter_content,
-      cover_letters.generation_method AS cover_letter_method,
-      cover_letters.status AS cover_letter_status,
-      cover_letters.candidate_note AS cover_letter_candidate_note,
       CASE WHEN resume_versions.id = (
         SELECT latest_resume.id
         FROM resume_versions AS latest_resume
@@ -149,7 +134,6 @@ export default function QueuePage() {
     FROM resume_versions
     JOIN jobs ON jobs.id = resume_versions.job_id
     LEFT JOIN applications ON applications.job_id = jobs.id
-    LEFT JOIN cover_letters ON cover_letters.application_id = applications.id
     ORDER BY resume_versions.created_at DESC, resume_versions.id DESC
   `).all() as ResumeRow[];
   const { pendingGroups, approvedGroups, rejectedGroups } = partitionResumeQueue(resumes);
@@ -162,12 +146,12 @@ export default function QueuePage() {
         <div className="stack">
           <section className="card">
             <div className="card-header"><div><h2>Pending decision</h2><p>Review the latest tailored resume for each job</p></div><StatusPill status={`${pendingGroups.length} pending`} /></div>
-            {pendingGroups.length ? <div className="card-body stack"><ResumeGroupList groups={pendingGroups} /></div> : <EmptyState title="No pending resumes" body="Generate a resume from a matched job to add it here." />}
+            {pendingGroups.length ? <div className="card-body stack"><ResumeGroupList groups={pendingGroups} /></div> : <EmptyState title="No pending resumes" body="Prepare a job from the Jobs page to add its tailored resume here." href="/jobs" action="Review jobs" />}
           </section>
 
           {approvedGroups.length ? (
-            <section className="card">
-              <div className="card-header"><div><h2>Approved to apply</h2><p>Ready for your final check and application</p></div><StatusPill status={`${approvedGroups.length} approved`} /></div>
+            <section className="card" id="approved-to-apply">
+              <div className="card-header"><div><h2>Resume approved</h2><p>Finish the cover letter, then approve the complete application</p></div><StatusPill status={`${approvedGroups.length} approved`} /></div>
               <div className="card-body stack"><ResumeGroupList groups={approvedGroups} /></div>
             </section>
           ) : null}
@@ -182,12 +166,12 @@ export default function QueuePage() {
 
         <aside className="stack">
           <section className="card">
-            <div className="card-header"><div><h2>Matched jobs</h2><p>Score {minimumScore} or higher, hard filters passed</p></div></div>
+            <div className="card-header"><div><h2>Ready to prepare</h2><p>Eligible jobs with no tailored resume yet</p></div></div>
             {matchedJobs.length ? <div className="card-body stack">{matchedJobs.map((job) => <article key={job.id}>
-              <div className="inline-actions"><ScoreBadge score={job.score} /><ConfidenceBadge score={job.confidence_score} /><StatusPill status={job.status} /></div>
+              <div className="inline-actions"><ScoreBadge score={job.score} /><ConfidenceBadge score={job.confidence_score} /></div>
               <Link className="job-title" href={`/jobs/${job.id}`}>{job.title}</Link><span className="job-meta">{job.company} · {job.location}</span>
               <p className="muted">{job.match_summary}</p>
-              <div className="inline-actions">{job.apply_url ? <a className="button secondary small" href={job.apply_url} target="_blank" rel="noreferrer">Apply</a> : null}<form action={generateResumeAction}><input type="hidden" name="job_id" value={job.id} /><ResumeSubmitButton className="button small">Generate resume</ResumeSubmitButton></form><form action={updateJobStatusAction}><input type="hidden" name="id" value={job.id} /><input type="hidden" name="status" value="dismissed" /><button className="button ghost small danger-text" type="submit">Dismiss</button></form></div>
+              <div className="inline-actions"><Link className="button small" href={`/jobs/${job.id}`}>Prepare application</Link><form action={updateJobStatusAction}><input type="hidden" name="id" value={job.id} /><input type="hidden" name="status" value="dismissed" /><button className="button ghost small danger-text" type="submit">Dismiss</button></form></div>
             </article>)}</div> : <EmptyState title="Queue is clear" body="Fetch new jobs or lower the score threshold in Automation." href="/settings" action="Review automation" />}
           </section>
         </aside>

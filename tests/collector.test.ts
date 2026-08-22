@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  considerRequestHeaders,
+  cookieHeaderFromSetCookies,
   normalizeAshbyJobs,
   normalizeGreenhouseJobs,
   normalizeHimalayasJobs,
@@ -170,6 +172,24 @@ describe("job source normalization", () => {
 });
 
 describe("collector rate-limit helpers", () => {
+  it("preserves the Consider session and CSRF preconditions", () => {
+    const cookieHeader = cookieHeaderFromSetCookies([
+      "session=abc123; Path=/; HttpOnly",
+      "session.sig=signature; Path=/; HttpOnly",
+    ]);
+    expect(cookieHeader).toBe("session=abc123; session.sig=signature");
+    expect(considerRequestHeaders(
+      "https://jobs.greylock.com/jobs?jobTypes=UX+Designer",
+      "csrf-token",
+      cookieHeader,
+    )).toMatchObject({
+      Origin: "https://jobs.greylock.com",
+      Referer: "https://jobs.greylock.com/jobs?jobTypes=UX+Designer",
+      "X-CSRF-Token": "csrf-token",
+      Cookie: cookieHeader,
+    });
+  });
+
   it("parses Retry-After seconds", () => {
     expect(parseRetryAfter("12")).toBe(12_000);
   });

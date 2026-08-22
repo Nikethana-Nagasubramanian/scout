@@ -1,13 +1,15 @@
 import Link from "next/link";
-import { addManualJobAction, approveJobAction, runWorkflowAction, updateJobStatusAction } from "@/app/actions";
-import { ConfidenceBadge, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
+import { approveJobAction, runWorkflowAction, updateJobStatusAction } from "@/app/actions";
+import { ManualJobModal } from "@/components/ManualJobModal";
+import { PageHeader, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db } from "@/lib/database";
+import { buildFetchResourceAudit, type FetchResourceKey } from "@/lib/fetch-audit";
 import { jobNeedsFreshReview } from "@/lib/job-deduplication";
 import { isProductDesignRoleFamily } from "@/lib/job-fit";
-import type { Job, ScoreBreakdown } from "@/lib/types";
-import { formatDateTime, relativeAge, safeJson } from "@/lib/utils";
+import type { Job, ScoreBreakdown, WorkflowLog } from "@/lib/types";
+import { formatDateTime, safeJson } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -119,6 +121,13 @@ function groupFetchHistoryJobs(jobs: FetchHistoryJob[]): FetchSourceGroup[] {
   ));
 }
 
+function fetchGroupResourceKey(group: FetchSourceGroup): FetchResourceKey {
+  if (group.sourceType.startsWith("gmail_")) return "gmail";
+  if (["remotive", "jobicy", "himalayas"].includes(group.sourceType)) return "public";
+  if (group.sourceType === "hiring_cafe") return "hiring_cafe";
+  return "official";
+}
+
 interface JobListRow extends Job {
   source_origin_name: string | null;
   source_origin_url: string | null;
@@ -134,8 +143,10 @@ interface JobListRow extends Job {
 export default async function JobsPage({ searchParams }: SearchProps) {
   const parameters = await searchParams;
   const query = parameters.q?.trim() || "";
-  const runId = Number(parameters.run);
-  const run = !query && Number.isFinite(runId) && runId > 0
+  const requestedRunId = Number(parameters.run);
+  const latestRunId = (db.prepare("SELECT id FROM collection_runs ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined)?.id || 0;
+  const runId = Number.isFinite(requestedRunId) && requestedRunId > 0 ? requestedRunId : latestRunId;
+  const run = runId > 0
     ? db.prepare(`
         SELECT collection_runs.id, collection_runs.status, collection_runs.jobs_found,
           collection_runs.jobs_added, collection_runs.jobs_updated, collection_runs.error_summary,
@@ -154,10 +165,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         WHERE collection_runs.id = ?
       `).get(runId) as RunSummary | undefined
     : undefined;
+  const listRun = query ? undefined : run;
   const status = query ? "all" : parameters.status || (run ? "all" : "active");
   const fit = query ? "all" : parameters.fit || (run ? "review" : "eligible");
   const source = parameters.source || "all";
-  const fetchCount = (db.prepare("SELECT COUNT(*) AS count FROM collection_runs").get() as { count: number }).count;
   const fetchHistory = db.prepare(`
     SELECT collection_runs.id, collection_runs.slot, collection_runs.started_at,
       collection_runs.completed_at, collection_runs.status, collection_runs.jobs_found,
@@ -208,7 +219,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       END AS hiring_cafe_status
     FROM collection_runs
     ORDER BY collection_runs.id DESC
-    LIMIT 10
+    LIMIT 5
   `).all() as FetchHistoryRow[];
   const historyJobsStatement = db.prepare(`
     SELECT jobs.id, jobs.title, jobs.company, jobs.description, jobs.duplicate_of_job_id,
@@ -240,9 +251,29 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         .filter((job) => isProductDesignRoleFamily(job.title, job.description))),
     ]),
   );
+  const selectedRunLogs = run ? db.prepare(`
+    SELECT workflow_logs.*, job_sources.name AS source_name
+    FROM workflow_logs
+    LEFT JOIN job_sources ON job_sources.id = workflow_logs.source_id
+    WHERE workflow_logs.run_id = ?
+    ORDER BY workflow_logs.id
+  `).all(run.id) as WorkflowLog[] : [];
+  const resourceAudits = buildFetchResourceAudit(selectedRunLogs);
+  const selectedSourceGroups = run ? historySourceGroups.get(run.id) || [] : [];
+  const auditedResourceGroups = new Map<FetchResourceKey, FetchSourceGroup[]>();
+  for (const group of selectedSourceGroups) {
+    const key = fetchGroupResourceKey(group);
+    const grouped = auditedResourceGroups.get(key) || [];
+    grouped.push(group);
+    auditedResourceGroups.set(key, grouped);
+  }
+  const accountedResourceCount = resourceAudits.filter((resource) => resource.status !== "not_checked").length;
+  const checkedResourceCount = resourceAudits.filter((resource) => ["complete", "partial", "failed"].includes(resource.status)).length;
+  const coolingResourceCount = resourceAudits.filter((resource) => resource.status === "cooldown" || resource.skipped > 0).length;
   const selectedRunMetrics = run
     ? strictRunMetrics(historyJobsStatement.all(run.id) as FetchHistoryJob[])
     : null;
+  const selectedHistoryRun = run ? fetchHistory.find((historyRun) => historyRun.id === run.id) : undefined;
   const clauses: string[] = [];
   const values: Array<string | number> = [];
 
@@ -276,10 +307,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const runJoin = run
+  const runJoin = listRun
     ? "INNER JOIN collection_job_results AS run_result ON run_result.job_id = jobs.id AND run_result.run_id = ?"
     : "";
-  const runColumns = run
+  const runColumns = listRun
     ? "run_result.outcome AS run_outcome, run_result.eligible AS run_eligible, run_result.classification AS run_classification, run_result.reasons_json AS run_reasons_json"
     : "NULL AS run_outcome, NULL AS run_eligible, NULL AS run_classification, NULL AS run_reasons_json";
   const savedJobs = db.prepare(`
@@ -317,239 +348,162 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       score DESC,
       first_seen_at DESC
     LIMIT 250
-  `).all(...(run ? [run.id, ...values] : values)) as JobListRow[];
+  `).all(...(listRun ? [listRun.id, ...values] : values)) as JobListRow[];
   const jobs = savedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+  const resultFoundCount = selectedRunMetrics?.relevant ?? jobs.length;
+  const resultSourceCount = accountedResourceCount || resourceAudits.length;
 
   return (
-    <div className="page">
+    <div className="page jobs-page">
       <PageHeader title="Jobs" description="Fetch, review, and decide which opportunities deserve your time.">
+        <ManualJobModal />
         <form action={runWorkflowAction}>
           <input type="hidden" name="slot" value="manual" />
-          <WorkflowSubmitButton>Fetch new jobs</WorkflowSubmitButton>
+          <WorkflowSubmitButton sourceCount={resourceAudits.length}>Fetch new jobs</WorkflowSubmitButton>
         </form>
       </PageHeader>
-      {run ? (
-        <section className={`callout fetch-result ${run.status === "completed" ? "success" : run.status === "failed" ? "error" : "warning"}`} role="status">
-          <div className="fetch-result-summary">
-            <div className="fetch-result-title">
-              <span className="fetch-result-icon" aria-hidden="true">{run.status === "completed" ? "✓" : run.status === "failed" ? "×" : "!"}</span>
-              <div>
-                <strong>
-                  {run.status === "failed"
-                    ? "Fetch failed"
-                    : run.status === "completed_with_errors"
-                      ? `Fetch completed with ${run.error_summary.split("\n").filter(Boolean).length} source issue${run.error_summary.split("\n").filter(Boolean).length === 1 ? "" : "s"}`
-                      : run.status === "completed_with_warnings"
-                        ? "Fetch completed with cooldowns"
-                        : "Fetch complete"}
-                </strong>
-                <span>{run.status === "completed_with_errors" ? "Working sources still saved their results." : run.status === "completed_with_warnings" ? "Cooling sources were skipped safely and will run later." : "The workflow finished processing your enabled sources."}</span>
-              </div>
-            </div>
-            {selectedRunMetrics && selectedRunMetrics.relevant > 0 ? (
-              <>
-                <p>Only Product Designer, UI/UX Designer, and verified digital Design Engineer roles count as found.</p>
-                <div className="fetch-metric-grid">
-                  <div><strong>{selectedRunMetrics.relevant}</strong><span>Relevant roles found</span></div>
-                  <div><strong>{selectedRunMetrics.newJobs}</strong><span>New to review</span></div>
-                  <div><strong>{selectedRunMetrics.refreshed}</strong><span>Seen before</span></div>
-                  <div><strong>{selectedRunMetrics.eligible}</strong><span>Eligible</span></div>
-                  <div><strong>{selectedRunMetrics.needsVerification}</strong><span>Needs verification</span></div>
-                  <div><strong>{selectedRunMetrics.filtered}</strong><span>Filtered</span></div>
-                  <div><strong>{selectedRunMetrics.duplicates}</strong><span>Duplicates hidden</span></div>
-                </div>
-                {run.error_summary ? <div className="fetch-source-issue"><strong>Source issue</strong><span>{run.error_summary}</span></div> : null}
-              </>
-            ) : (
-              <p>No jobs from this fetch pass the current strict role gate. Raw source inventory remains available in Technical details. {run.error_summary}</p>
-            )}
+      <section className="jobs-results-summary" aria-label="Job collection summary">
+        <h2>Scout found {jobs.length} {jobs.length === 1 ? "role" : "roles"} worth your time</h2>
+        <p>Scout found {resultFoundCount} {resultFoundCount === 1 ? "role" : "roles"} across {resultSourceCount} {resultSourceCount === 1 ? "source" : "sources"}</p>
+      </section>
+      <section className="card fetch-audit-card" aria-label="Recent fetches">
+        <div className="fetch-audit-header">
+          <div>
+            <h2>Recent fetches</h2>
+            <p>Select a run to see exactly what Scout checked and what happened to every result.</p>
           </div>
-          <div className="inline-actions fetch-result-links">
-            <Link className="text-link" href={`/jobs?run=${run.id}&fit=all&status=all`}>All saved results</Link>
-            <Link className="text-link" href={`/jobs?run=${run.id}&fit=review&status=all`}>New and needs review</Link>
-            <Link className="text-link" href={`/jobs?run=${run.id}&fit=eligible&status=all`}>Eligible</Link>
-            <Link className="text-link" href={`/jobs?run=${run.id}&fit=needs_verification&status=all`}>Needs verification</Link>
-            <Link className="text-link" href={`/jobs?run=${run.id}&fit=filtered&status=all`}>Filtered</Link>
-            <Link className="text-link" href={`/diagnostics?run=${run.id}`}>Technical details</Link>
+          <div className="inline-actions">
+            <Link className="text-link" href="/signals">View target companies</Link>
+            <Link className="text-link" href="/sources">Manage sources</Link>
           </div>
-        </section>
-      ) : null}
-
-      <details className="card fetch-history-card">
-        <summary>
-          <span className="fetch-history-heading">
-            <span>
-              <strong>Fetch history</strong>
-              <small>Inspect recent searches without crowding your job list</small>
-            </span>
-            <span className="fetch-history-latest">
-              {fetchHistory[0] ? `Latest: Fetch ${fetchHistory[0].id}` : "No fetches yet"}
-              <StatusPill status={fetchHistory[0]?.status || "not_started"} />
-            </span>
-          </span>
-        </summary>
-        <div className="fetch-history-body">
-          <div className="fetch-history-intro">
-            <p>{fetchCount} fetch{fetchCount === 1 ? "" : "es"} recorded. The 10 most recent are shown here.</p>
-            <Link className="text-link" href="/sources">Manage sources and cooldowns</Link>
-          </div>
-          {fetchHistory.length ? (
-            <div className="fetch-history-list">
-              {fetchHistory.map((historyRun) => {
-                const sourceGroups = historySourceGroups.get(historyRun.id) || [];
-                const relevantCount = sourceGroups.reduce((total, group) => total + group.jobs.length, 0);
-                return (
-                  <details className="fetch-history-run" key={historyRun.id}>
-                    <summary>
-                      <span>
-                        <strong>Fetch {historyRun.id}</strong>
-                        <small>{formatDateTime(historyRun.completed_at || historyRun.started_at)} · {historyRun.slot.replaceAll("_", " ")}</small>
-                      </span>
-                      <span className="fetch-history-stats">
-                        <span>{relevantCount} relevant roles found</span>
-                        <span>{historyRun.review_jobs} to review</span>
-                        <span>{historyRun.duplicate_jobs} duplicates hidden</span>
-                      </span>
-                      <StatusPill status={historyRun.status} />
-                    </summary>
-                    <div className="fetch-history-run-body">
-                      <div className="fetch-source-status">
-                        <strong>HiringCafe</strong>
-                        <StatusPill status={historyRun.hiring_cafe_status} />
-                        <span>
-                          {historyRun.hiring_cafe_status === "ran"
-                            ? "Checked during this fetch."
-                            : historyRun.hiring_cafe_status === "cooldown"
-                              ? "Included in the workflow, but skipped because its 24-hour cooldown was active."
-                              : historyRun.hiring_cafe_status === "failed"
-                                ? "Attempted, but the source check failed."
-                                : "No HiringCafe activity was recorded for this fetch."}
-                        </span>
-                      </div>
-                      {sourceGroups.length ? (
-                        <div className="fetch-source-groups">
-                          {sourceGroups.map((group) => (
-                            <details className="fetch-source-group" key={group.key}>
-                              <summary>
-                                <span>
-                                  <strong>{group.sourceName}</strong>
-                                  <small>{group.sourceType.replaceAll("_", " ")}{group.originName ? ` via ${group.originName}` : ""}</small>
-                                </span>
-                                <span className="fetch-history-stats">
-                                  <span>{group.jobs.length} saved</span>
-                                  <span>{group.newJobs} new</span>
-                                  <span>{group.eligible} eligible</span>
-                                  <span>{group.needsVerification} verify</span>
-                                  <span>{group.filtered} filtered</span>
-                                </span>
-                              </summary>
-                              <div className="fetch-history-jobs">
-                                {group.jobs.map((job) => {
-                                  const reasons = safeJson<string[]>(job.reasons_json, []);
-                                  const historyStatus = job.duplicate_of_job_id !== null
-                                    ? "duplicate"
-                                    : job.application_status
-                                      ? job.application_status === "rejected" ? "previously_rejected" : "previously_applied"
-                                      : ["irrelevant", "dismissed"].includes(job.job_status)
-                                        ? "previously_rejected"
-                                        : job.outcome === "refreshed"
-                                          ? "previously_fetched"
-                                          : job.outcome;
-                                  return (
-                                    <div className="fetch-history-job fetch-history-job-detailed" key={job.id}>
-                                      <span>
-                                        <strong>{job.title}</strong>
-                                        <small>{job.company}</small>
-                                        {reasons.length ? (
-                                          <small className="fetch-history-reasons">{reasons.join(" ")}</small>
-                                        ) : (
-                                          <small className="success-text">No eligibility conflicts found.</small>
-                                        )}
-                                      </span>
-                                      <span className="inline-actions">
-                                        <StatusPill status={job.classification} />
-                                        <StatusPill status={historyStatus} />
-                                        <Link className="text-link" href={`/jobs/${job.id}`}>Review</Link>
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </details>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="muted">
-                          {historyRun.jobs_found > 0
-                            ? "This older fetch did not retain exact per-job results."
-                            : "No exact product design roles were saved from this fetch."}
-                        </p>
-                      )}
-                      <div className="inline-actions fetch-history-actions">
-                        <Link className="button secondary small" href={`/jobs?run=${historyRun.id}&fit=review&status=all`}>
-                          Review this fetch
-                        </Link>
-                        <Link className="text-link" href={`/jobs?run=${historyRun.id}&fit=all&status=all`}>
-                          View all {relevantCount} relevant jobs
-                        </Link>
-                        <Link className="text-link" href={`/diagnostics?run=${historyRun.id}`}>Technical details</Link>
-                      </div>
-                    </div>
-                  </details>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="muted">Click Fetch new jobs to create the first recorded search.</p>
-          )}
         </div>
-      </details>
+        {fetchHistory.length ? (
+          <>
+            <nav className="fetch-run-tabs" aria-label="Last five fetches">
+              {fetchHistory.map((historyRun) => (
+                <Link
+                  className={run?.id === historyRun.id ? "active" : ""}
+                  href={`/jobs?run=${historyRun.id}&fit=review&status=all`}
+                  key={historyRun.id}
+                >
+                  <strong>Fetch {historyRun.id}</strong>
+                  <small>{formatDateTime(historyRun.completed_at || historyRun.started_at)}</small>
+                  <span>{historyRun.review_jobs} to review</span>
+                </Link>
+              ))}
+            </nav>
+            {run ? (
+              <details className="fetch-audit-body">
+                <summary className="fetch-audit-summary">
+                  <div className="fetch-audit-summary-line">
+                    <span>Summary of Fetch {run.id}</span>
+                    <span aria-hidden="true" className="fetch-summary-dot" />
+                    <span>{formatDateTime(selectedHistoryRun?.completed_at || selectedHistoryRun?.started_at || "")}</span>
+                    <span className="fetch-summary-toggle" aria-hidden="true" />
+                  </div>
+                  {selectedRunMetrics ? (
+                    <div className="fetch-metric-grid compact-metrics">
+                      <div><strong>{run.jobs_found}</strong><span>Roles scanned</span></div>
+                      <div><strong>{selectedRunMetrics.newJobs}</strong><span>New to review</span></div>
+                      <div><strong>{selectedRunMetrics.refreshed}</strong><span>Seen before</span></div>
+                      <div><strong>{Math.max(0, run.jobs_found - selectedRunMetrics.relevant)}</strong><span>Ruled out</span></div>
+                      <div><strong>{selectedRunMetrics.relevant}</strong><span>Matched your search</span></div>
+                      <div><strong>{selectedRunMetrics.filtered}</strong><span>Filtered out</span></div>
+                      <div><strong>{selectedRunMetrics.duplicates}</strong><span>Duplicates removed</span></div>
+                    </div>
+                  ) : null}
+                </summary>
+                <div className="fetch-audit-expanded">
+                  <p className="fetch-audit-accounting">Scout accounted for {accountedResourceCount} of {resourceAudits.length} resource groups. {checkedResourceCount} were checked and {coolingResourceCount} had an active cooldown.</p>
+                {run.error_summary ? <div className="fetch-source-issue"><strong>Source issue</strong><span>{run.error_summary}</span></div> : null}
+                <div className="fetch-resource-table">
+                  <div className="fetch-resource-table-head">
+                    <span>Resource</span><span>Extracted</span><span>Status</span>
+                  </div>
+                  {resourceAudits.map((resource) => {
+                    const sourceGroups = auditedResourceGroups.get(resource.key) || [];
+                    const savedJobs = sourceGroups.reduce((total, group) => total + group.jobs.length, 0);
+                    return (
+                      <details className="fetch-resource-row" key={resource.key}>
+                        <summary>
+                          <span><strong>{resource.label}</strong><small>{resource.description}</small></span>
+                          <span>{savedJobs} relevant saved{resource.hiringSignals ? `, ${resource.hiringSignals} signals` : ""}{resource.boardsAdded ? `, ${resource.boardsAdded} boards added` : ""}</span>
+                          <StatusPill status={resource.status} />
+                        </summary>
+                        <div className="fetch-resource-details">
+                          <div className="fetch-resource-events">
+                            {resource.events.length ? resource.events.map((event, index) => (
+                              <div key={`${event.label}-${index}`}>
+                                <span><strong>{event.label}</strong><small>{event.message}</small></span>
+                                <StatusPill status={event.level} />
+                              </div>
+                            )) : <p className="muted">No source activity was recorded for this resource group.</p>}
+                          </div>
+                          {sourceGroups.length ? (
+                            <div className="fetch-source-groups">
+                              {sourceGroups.map((group) => (
+                                <details className="fetch-source-group" key={group.key}>
+                                  <summary>
+                                    <span><strong>{group.sourceName}</strong><small>{group.sourceType.replaceAll("_", " ")}{group.originName ? ` via ${group.originName}` : ""}</small></span>
+                                    <span className="fetch-history-stats"><span>{group.jobs.length} saved</span><span>{group.newJobs} new</span><span>{group.eligible} eligible</span><span>{group.needsVerification} verify</span><span>{group.filtered} filtered</span></span>
+                                  </summary>
+                                  <div className="fetch-history-jobs">
+                                    {group.jobs.map((job) => {
+                                      const reasons = safeJson<string[]>(job.reasons_json, []);
+                                      const historyStatus = job.duplicate_of_job_id !== null
+                                        ? "duplicate"
+                                        : job.application_status
+                                          ? job.application_status === "rejected" ? "previously_rejected" : "previously_applied"
+                                          : ["irrelevant", "dismissed"].includes(job.job_status)
+                                            ? "previously_rejected"
+                                            : job.outcome === "refreshed" ? "previously_fetched" : job.outcome;
+                                      return (
+                                        <div className="fetch-history-job fetch-history-job-detailed" key={job.id}>
+                                          <span><strong>{job.title}</strong><small>{job.company}</small>{reasons.length ? <small className="fetch-history-reasons">{reasons.join(" ")}</small> : <small className="success-text">No eligibility conflicts found.</small>}</span>
+                                          <span className="inline-actions"><StatusPill status={job.classification} /><StatusPill status={historyStatus} /><Link className="text-link" href={`/jobs/${job.id}`}>Review</Link></span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </details>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+                <div className="inline-actions fetch-audit-links">
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=all&status=all`}>All saved results</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=review&status=all`}>New and needs review</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=filtered&status=all`}>Filtered</Link>
+                  <Link className="text-link" href={`/diagnostics?run=${run.id}`}>Technical details</Link>
+                </div>
+                </div>
+              </details>
+            ) : null}
+          </>
+        ) : <p className="muted fetch-audit-empty">Click Fetch new jobs to create the first recorded search.</p>}
+      </section>
 
-      <form className="card filter-bar" method="get">
-        {run ? <input type="hidden" name="run" value={run.id} /> : null}
-        <input type="search" name="q" defaultValue={query} placeholder="Search all saved jobs by title, company, or description" aria-label="Search all saved jobs" />
-        <select name="fit" defaultValue={fit} aria-label="Profile match filter">
-          {run ? <option value="review">New and needs review</option> : null}
-          <option value="eligible">Eligible only</option>
-          <option value="needs_verification">Needs verification</option>
-          <option value="strong">Strong, 80+</option>
-          <option value="promising">Promising, 65 to 79</option>
-          <option value="all">All match levels</option>
-          <option value="filtered">Filtered</option>
-        </select>
+      <form className="jobs-filter-bar" method="get">
+        {listRun ? <input type="hidden" name="run" value={listRun.id} /> : null}
+        <label className="jobs-search-field">
+          <span className="jobs-search-icon" aria-hidden="true" />
+          <input type="search" name="q" defaultValue={query} placeholder="Search all saved jobs by title, company, or description" aria-label="Search all saved jobs" />
+        </label>
         <select name="status" defaultValue={status} aria-label="Status filter"><option value="active">Active only</option><option value="all">All statuses</option><option value="discovered">Discovered</option><option value="reviewing">Reviewing</option><option value="shortlisted">Shortlisted</option><option value="irrelevant">Irrelevant</option><option value="dismissed">Dismissed</option></select>
-        <select name="source" defaultValue={source} aria-label="Source filter">
-          <option value="all">All sources</option>
-          <option value="greenhouse">Greenhouse</option>
-          <option value="ashby">Ashby</option>
-          <option value="gmail">Email alerts and newsletters</option>
-          <option value="hiring_cafe">HiringCafe</option>
-          <option value="public">Public discovery feeds</option>
-          <option value="manual">Manual imports</option>
-        </select>
-        <button className="button secondary" type="submit">Filter</button>
+        <div className="jobs-fit-segments" role="group" aria-label="Profile match filter">
+          <button className={fit === "review" ? "active" : ""} name="fit" value="review" type="submit">Needs review</button>
+          <button className={fit === "eligible" ? "active" : ""} name="fit" value="eligible" type="submit">Eligible</button>
+          <span aria-hidden="true" />
+          <button className={fit === "filtered" ? "active" : ""} name="fit" value="filtered" type="submit">Filtered</button>
+        </div>
       </form>
 
-      <details className="card form-card">
-        <summary className="text-link">Import a job manually</summary>
-        <form action={addManualJobAction} className="form-section">
-          <div className="form-grid">
-            <div className="field"><label htmlFor="company">Company</label><input id="company" name="company" required /></div>
-            <div className="field"><label htmlFor="title">Job title</label><input id="title" name="title" required /></div>
-            <div className="field"><label htmlFor="location">Location</label><input id="location" name="location" /></div>
-            <div className="field"><label htmlFor="url">Job URL</label><input id="url" name="url" type="url" /></div>
-            <div className="field"><label htmlFor="workplace_type">Workplace</label><select id="workplace_type" name="workplace_type"><option value="unspecified">Not specified</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="on-site">On-site</option></select></div>
-            <div className="field"><label htmlFor="employment_type">Employment type</label><input id="employment_type" name="employment_type" placeholder="Full-time" /></div>
-            <div className="field full"><label htmlFor="description">Job description</label><textarea id="description" name="description" required rows={10} /></div>
-          </div>
-          <div className="form-actions"><button className="button" type="submit">Import and score</button></div>
-        </form>
-      </details>
-      <div className="spacer" />
-
-      <section className="card">
-        <div className="card-header"><div><h2>{run ? `${jobs.length} results from Fetch ${run.id}` : `${jobs.length} opportunities`}</h2><p>{run ? "Every saved result from this fetch remains inspectable" : "Showing up to 250 ranked results"}</p></div></div>
-        {jobs.length ? <div className="table-wrap"><table><thead><tr><th>Role</th><th>Location</th><th>Profile match</th><th>Why</th><th>Posting signal</th><th>{run ? "Fetch result" : "Found"}</th><th>Source</th><th>Decision</th></tr></thead><tbody>
+      <section className="jobs-results-list">
+        {jobs.length ? <div className="jobs-result-rows">
           {jobs.map((job) => {
             const breakdown = safeJson<ScoreBreakdown>(job.score_breakdown, {
               title: 0,
@@ -571,47 +525,24 @@ export default async function JobsPage({ searchParams }: SearchProps) {
               job.run_reasons_json,
               [...breakdown.hardFilterReasons, ...breakdown.verificationReasons],
             );
-            const priorFetchStatus = job.duplicate_of_job_id !== null
-              ? "duplicate"
-              : job.application_status
-                ? job.application_status === "rejected" ? "previously_rejected" : "previously_applied"
-                : ["irrelevant", "dismissed"].includes(job.status)
-                  ? "previously_rejected"
-                  : job.run_outcome === "refreshed"
-                    ? "previously_fetched"
-                    : job.run_outcome || "saved";
-            const priorFetchNote = job.duplicate_of_job_id !== null
-              ? job.duplicate_reason || "Duplicate of an existing Scout job."
-              : job.application_status
-                ? "This role already exists in Applications."
-                : ["irrelevant", "dismissed"].includes(job.status)
-                  ? "You previously rejected this role."
-                  : job.run_outcome === "refreshed"
-                    ? "Scout has fetched this job before."
-                    : "";
             const previouslyHandled = Boolean(
               job.duplicate_of_job_id !== null
               || job.application_status
               || ["irrelevant", "dismissed", "archived"].includes(job.status),
             );
-            return <tr key={job.id}>
-              <td>
-                <span className="job-title">{job.title}</span>
-                <span className="job-meta">{job.company}</span>
-              </td>
-              <td>{job.location || "Not listed"}</td>
-              <td><ScoreBadge score={job.score} passed={classification !== "filtered"} /></td>
-              <td className="filter-reason-cell">
+            return <article className="jobs-result-row" key={job.id}>
+              <div className="jobs-result-primary">
+                <div className="jobs-result-identity">
+                  <strong>{job.title}</strong>
+                  <span>{job.company}<i aria-hidden="true" />{job.location || "Not specified"}</span>
+                </div>
+                <div className="jobs-result-match"><strong>{job.score}%</strong><span>Profile match</span></div>
+              </div>
+              <div className="jobs-result-reason">
                 <StatusPill status={classification} />
-                {reasons.length ? <ul>{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : <span className="success-text">No conflicts found</span>}
-              </td>
-              <td><ConfidenceBadge score={job.confidence_score} /></td>
-              <td>{run ? <><StatusPill status={priorFetchStatus} />{priorFetchNote ? <span className="job-meta fetch-state-note">{priorFetchNote}</span> : null}</> : relativeAge(job.first_seen_at)}</td>
-              <td>
-                <StatusPill status={job.source_type} />
-              </td>
-              <td>
-                <div className="job-decision-actions">
+                <p>{reasons[0] || "No eligibility conflicts found."}</p>
+              </div>
+              <div className="job-decision-actions">
                   {job.application_status ? (
                     <Link className="button secondary small" href="/applications">View application</Link>
                   ) : previouslyHandled ? (
@@ -635,11 +566,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                       <button className="button ghost small danger-text" type="submit">Reject</button>
                     </form>
                   ) : null}
-                </div>
-              </td>
-            </tr>;
+              </div>
+            </article>;
           })}
-        </tbody></table></div> : run && fit === "review" ? (
+        </div> : listRun && fit === "review" ? (
           <div className="empty-state">
             <h3>No new decisions needed</h3>
             <p>Every relevant role in this fetch was previously fetched, rejected, applied to, or already has resume work. Use All saved results to inspect them.</p>

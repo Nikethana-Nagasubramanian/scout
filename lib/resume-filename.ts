@@ -1,4 +1,4 @@
-const CANDIDATE_FILENAME_PREFIX = "NikethanaNN";
+const CANDIDATE_FILENAME_PREFIX = "Nikethana";
 
 function filenameSegment(value: string, fallback: string): string {
   const normalized = value
@@ -12,4 +12,8 @@ function filenameSegment(value: string, fallback: string): string {
 
 export function resumePdfFilename(company: string): string {
   return `${CANDIDATE_FILENAME_PREFIX}_Resume_${filenameSegment(company, "Company")}.pdf`;
+}
+
+export function coverLetterPdfFilename(company: string): string {
+  return `${CANDIDATE_FILENAME_PREFIX}_CoverLetter_${filenameSegment(company, "Company")}.pdf`;
 }

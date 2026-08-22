@@ -68,6 +68,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status = 'draft',
       updated_at = CURRENT_TIMESTAMP
   `).run(numericId, draft.content, draft.method, JSON.stringify(draft.evidence), candidateNote);
+  db.prepare(`
+    UPDATE applications
+    SET status = CASE WHEN status = 'ready_to_apply' THEN 'preparing' ELSE status END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(numericId);
   const coverLetter = db.prepare("SELECT * FROM cover_letters WHERE application_id = ?").get(numericId);
   return Response.json({ coverLetter });
 }
@@ -97,6 +103,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       status = 'edited',
       updated_at = CURRENT_TIMESTAMP
   `).run(numericId, content);
+  db.prepare(`
+    UPDATE applications
+    SET status = CASE WHEN status = 'ready_to_apply' THEN 'preparing' ELSE status END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(numericId);
   const coverLetter = db.prepare("SELECT * FROM cover_letters WHERE application_id = ?").get(numericId);
   return Response.json({ coverLetter });
 }

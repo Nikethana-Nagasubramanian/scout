@@ -317,25 +317,67 @@ async function fetchJson<T>(url: string, log: RequestLogger): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function postJson<T>(url: string, body: unknown, log: RequestLogger): Promise<T> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  log: RequestLogger,
+  headers: Record<string, string> = {},
+): Promise<T> {
   const response = await fetchWithRetry(url, log, {
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...headers,
     },
     body: JSON.stringify(body),
   });
   return response.json() as Promise<T>;
 }
 
-async function fetchHtml(url: string, log: RequestLogger): Promise<{ finalUrl: string; html: string }> {
-  const response = await fetchWithRetry(url, log);
+export function cookieHeaderFromSetCookies(setCookies: string[]): string {
+  return setCookies
+    .map((value) => value.split(";", 1)[0]?.trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+function responseCookieHeader(response: Response): string {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const setCookies = headers.getSetCookie?.() || [];
+  return cookieHeaderFromSetCookies(setCookies);
+}
+
+export function considerRequestHeaders(sourceUrl: string, csrfToken: string, cookieHeader: string): Record<string, string> {
+  const source = new URL(sourceUrl);
+  return {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    Origin: source.origin,
+    Referer: sourceUrl,
+    "X-CSRF-Token": csrfToken,
+    "X-Requested-With": "XMLHttpRequest",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+  };
+}
+
+async function fetchHtml(
+  url: string,
+  log: RequestLogger,
+  headers: Record<string, string> = {},
+): Promise<{ finalUrl: string; html: string; cookieHeader: string }> {
+  const response = await fetchWithRetry(url, log, { headers });
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/html")) {
     throw new HttpRequestError("The page did not return HTML.", response.status, null);
   }
-  return { finalUrl: response.url || url, html: await response.text() };
+  return {
+    finalUrl: response.url || url,
+    html: await response.text(),
+    cookieHeader: responseCookieHeader(response),
+  };
 }
 
 export function normalizeGreenhouseJobs(source: JobSource, jobs: GreenhouseJob[]): NormalizedJob[] {
@@ -789,12 +831,15 @@ interface ConsiderSearchResponse {
 async function fetchConsiderAtsBoards(
   sourceUrl: string,
   html: string,
+  cookieHeader: string,
   log: RequestLogger,
 ): Promise<ReturnType<typeof extractConsiderAtsBoards>> {
   const board = html.match(/"fixedBoard":"([^"]+)"/)?.[1];
+  const csrfToken = html.match(/"csrfToken":"([^"]+)"/)?.[1];
   const source = new URL(sourceUrl);
   const roleLabel = source.searchParams.get("jobTypes");
-  if (!board || !roleLabel) return [];
+  if (!board || !roleLabel || !csrfToken) return [];
+  const requestHeaders = considerRequestHeaders(sourceUrl, csrfToken, cookieHeader);
   const boardPayload = { id: board, isParent: true };
   const autocomplete = await postJson<ConsiderAutocompleteResponse>(
     `${source.origin}/api-boards/autocomplete/jobtypes`,
@@ -804,6 +849,7 @@ async function fetchConsiderAtsBoards(
       skipCompanyExcludes: false,
     },
     log,
+    requestHeaders,
   );
   const role = autocomplete.results
     ?.map((result) => result.self)
@@ -820,6 +866,7 @@ async function fetchConsiderAtsBoards(
       parentSlug: board,
     },
     log,
+    requestHeaders,
   );
   return extractConsiderAtsBoards(search.jobs || []);
 }
@@ -833,7 +880,12 @@ async function runCompanyDiscoverySource(runId: number, source: CompanyDiscovery
   const log: RequestLogger = (step, level, message, details, durationMs) => {
     writeWorkflowLog(runId, null, step, level, `${source.name}: ${message}`, details, durationMs);
   };
-  const page = await fetchHtml(source.url, log);
+  const sourceHost = new URL(source.url).hostname;
+  const considerRequest = sourceHost === "jobs.greylock.com";
+  const page = await fetchHtml(source.url, log, considerRequest ? {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  } : {});
   const hiringCafeSource = new URL(source.url).hostname.endsWith("hiringcafe.com");
   const newsletterSource = new URL(source.url).hostname.endsWith("substack.com");
   const getroSource = /Powered by Getro|www\.getro\.com\/vc/i.test(page.html);
@@ -909,7 +961,7 @@ async function runCompanyDiscoverySource(runId: number, source: CompanyDiscovery
     )
     : [];
   const namedConsiderBoards = considerSource
-    ? await fetchConsiderAtsBoards(source.url, page.html, log)
+    ? await fetchConsiderAtsBoards(source.url, page.html, page.cookieHeader, log)
     : [];
   const namedNewsletterBoards = newsletterSignals.flatMap((signal) => {
     const board = detectAtsBoardFromUrl(signal.url);

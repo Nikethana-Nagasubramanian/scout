@@ -18,7 +18,9 @@ export function StatusPill({ status }: { status: string }) {
     completed_with_warnings: "Completed, cooldowns active",
     needs_verification: "Needs verification",
     needs_review: "Needs review",
+    preparing: "Preparing application",
     ready_to_apply: "Ready to apply",
+    shortlisted: "Resume started",
     recruiter_screen: "Recruiter screen",
     follow_up_due: "Follow-up due",
   };

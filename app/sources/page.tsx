@@ -139,8 +139,9 @@ export default function SourcesPage() {
           )}
           {newsletterSignalCounts.total > 0 ? (
             <div className="callout">
-              <strong>{newsletterSignalCounts.total} curated hiring signals retained.</strong>{" "}
+              <strong>{newsletterSignalCounts.total} company leads retained.</strong>{" "}
               {newsletterSignalCounts.explicit_roles || 0} name a specific role and {newsletterSignalCounts.company_signals || 0} identify a company that is hiring more broadly.
+              {newsletterSignalCounts.company_signals ? <>{" "}<Link className="text-link" href="/signals">Review target companies</Link></> : null}
             </div>
           ) : null}
         </div>

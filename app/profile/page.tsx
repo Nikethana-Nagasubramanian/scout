@@ -68,6 +68,8 @@ export default function ProfilePage() {
               <form action={addFactAction} className="stack">
                 <div className="field"><label htmlFor="category">Section</label><select id="category" name="category"><option>Experience</option><option>Project</option><option>Education</option><option>Certification</option></select></div>
                 <div className="field"><label htmlFor="context">Company, project, or school</label><input id="context" name="context" placeholder="Nike, Senior Designer" /></div>
+                <div className="field"><label htmlFor="scope_type">Where Scout may use it</label><select id="scope_type" name="scope_type"><option value="career">Summary or any relevant role</option><option value="employer">One employer only</option></select></div>
+                <div className="field"><label htmlFor="scope_key">Employer when restricted</label><input id="scope_key" name="scope_key" placeholder="Leave empty for career-wide facts" /></div>
                 <div className="field"><label htmlFor="claim">Fact or achievement</label><textarea id="claim" name="claim" required placeholder="Led a verified project and include a metric when one is known." /></div>
                 <div className="field"><label htmlFor="fact_skills">Skills demonstrated</label><input id="fact_skills" name="fact_skills" placeholder="Figma, research, facilitation" /></div>
                 <label className="check-label"><input type="checkbox" name="verified" defaultChecked /> I confirm this is accurate</label>
@@ -79,7 +81,7 @@ export default function ProfilePage() {
           <section className="card">
             <div className="card-header"><div><h2>Truth bank</h2><p>{facts.length} candidate facts</p></div></div>
             {facts.length ? <div className="card-body stack">{facts.map((fact) => <article key={fact.id}>
-              <div className="inline-actions"><StatusPill status={fact.category} />{fact.verified ? <span className="success-text">Verified</span> : <span className="danger-text">Unverified</span>}</div>
+              <div className="inline-actions"><StatusPill status={fact.category} /><StatusPill status={fact.scope_type === "employer" ? `Only ${fact.scope_key || "one employer"}` : "Career-wide"} />{fact.verified ? <span className="success-text">Verified</span> : <span className="danger-text">Unverified</span>}</div>
               <strong>{fact.context}</strong><p>{fact.claim}</p>
               <div className="inline-actions"><div className="tag-list">{parseList(fact.skills).map((skill) => <span className="tag" key={skill}>{skill}</span>)}</div><form action={deleteFactAction}><input type="hidden" name="id" value={fact.id} /><button className="button ghost small danger-text" type="submit">Remove</button></form></div>
             </article>)}</div> : <EmptyState title="No facts yet" body="Add accomplishments, projects, education, and credentials that resume generation may use." />}

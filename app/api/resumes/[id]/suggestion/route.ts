@@ -1,5 +1,6 @@
 import { db, getSetting } from "@/lib/database";
 import { suggestResumeBulletWithOllama, type ResumeRewriteTarget } from "@/lib/local-ai";
+import { ensureResumeBlockIds } from "@/lib/resume-blocks";
 import type { Job, ResumeContent } from "@/lib/types";
 import { normalizeText, safeJson } from "@/lib/utils";
 
@@ -74,6 +75,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           sectionIndex: Number(candidateTarget.sectionIndex),
           entryLineIndex: Number(candidateTarget.entryLineIndex),
         }
+      : candidateTarget?.kind === "line"
+        && Number.isInteger(candidateTarget.sectionIndex)
+        && Number.isInteger(candidateTarget.lineIndex)
+        ? {
+            kind: "line",
+            sectionIndex: Number(candidateTarget.sectionIndex),
+            lineIndex: Number(candidateTarget.lineIndex),
+          }
       : { kind: "experience", sectionIndex: -1, entryLineIndex: -1 };
   const userEvidence = typeof body.userEvidence === "string"
     ? body.userEvidence.replace(/\s+/g, " ").trim().slice(0, 600)
@@ -113,8 +122,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return Response.json({ error: "Invalid request" }, { status: 400 });
   }
   if (!isResumeContent(body.content)) return Response.json({ error: "Invalid resume content" }, { status: 400 });
+  const content = ensureResumeBlockIds(body.content);
   db.prepare(
     "UPDATE resume_versions SET content_json = ?, status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-  ).run(JSON.stringify(body.content), resumeId);
-  return Response.json({ content: body.content });
+  ).run(JSON.stringify(content), resumeId);
+  return Response.json({ content });
 }

@@ -13,7 +13,7 @@ export default function OnboardingPage() {
     <div className="onboarding-shell">
       <div className="onboarding">
         <header className="onboarding-top">
-          <span className="brand-mark onboarding-logo">S</span>
+          <span className="onboarding-logo">S</span>
           <p className="eyebrow">One candidate. One focused search.</p>
           <h1>Set up your search profile</h1>
           <p>Scout uses these facts to filter jobs and create honest, relevant resume versions.</p>

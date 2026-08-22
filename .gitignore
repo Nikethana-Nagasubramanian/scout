@@ -6,6 +6,7 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.sqlite.*
 data/*.db
+scout.db
 data/generated/
 data/backups/
 tmp/

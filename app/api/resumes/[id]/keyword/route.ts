@@ -1,4 +1,5 @@
 import { db } from "@/lib/database";
+import { ensureResumeBlockIds } from "@/lib/resume-blocks";
 import { addResumeKeyword } from "@/lib/resume-keywords";
 import type { ResumeContent } from "@/lib/types";
 import { safeJson } from "@/lib/utils";
@@ -58,7 +59,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const storedContent = safeJson<ResumeContent>(row.content_json, fallbackContent);
-  const sourceContent = isResumeContent(body.content) ? body.content : storedContent;
+  const sourceContent = ensureResumeBlockIds(isResumeContent(body.content) ? body.content : storedContent);
   const content = addResumeKeyword(sourceContent, keyword);
   db.prepare(
     "UPDATE resume_versions SET content_json = ?, status = 'draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?",

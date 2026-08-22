@@ -7,6 +7,8 @@ import { db, setSetting } from "@/lib/database";
 import { discoverOfficialBoardForJob, runCollection, scoreAllJobs } from "@/lib/collector";
 import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
+import { ensureResumeBlockIds } from "@/lib/resume-blocks";
+import type { ResumeContent } from "@/lib/types";
 import { toJsonList } from "@/lib/utils";
 
 function text(formData: FormData, key: string): string {
@@ -39,22 +41,22 @@ function validatedResumeContent(formData: FormData): { id: number; contentJson: 
       !Array.isArray(content.skills) ||
       !Array.isArray(content.sections)
     ) return null;
-    return { id, contentJson };
+    return { id, contentJson: JSON.stringify(ensureResumeBlockIds(content as ResumeContent)) };
   } catch {
     return null;
   }
 }
 
-function ensureReadyApplicationForResume(resumeId: number): void {
+function ensurePreparingApplicationForResume(resumeId: number): void {
   const resume = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resumeId) as { job_id: number } | undefined;
   if (!resume) return;
   db.prepare(`
     INSERT INTO applications (job_id, resume_version_id, status)
-    VALUES (?, ?, 'ready_to_apply')
+    VALUES (?, ?, 'preparing')
     ON CONFLICT(job_id) DO UPDATE SET
       resume_version_id = excluded.resume_version_id,
       status = CASE
-        WHEN applications.status = 'ready_to_apply' THEN 'ready_to_apply'
+        WHEN applications.status IN ('ready_to_apply', 'preparing') THEN 'preparing'
         ELSE applications.status
       END,
       updated_at = CURRENT_TIMESTAMP
@@ -124,12 +126,15 @@ export async function saveProfileAction(formData: FormData): Promise<void> {
 export async function addFactAction(formData: FormData): Promise<void> {
   const claim = text(formData, "claim");
   if (!claim) return;
-  db.prepare("INSERT INTO candidate_facts (category, context, claim, skills, verified) VALUES (?, ?, ?, ?, ?)").run(
+  const scopeType = text(formData, "scope_type") === "employer" ? "employer" : "career";
+  db.prepare("INSERT INTO candidate_facts (category, context, claim, skills, verified, scope_type, scope_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     text(formData, "category") || "Experience",
     text(formData, "context"),
     claim,
     toJsonList(formData.get("fact_skills")),
     formData.get("verified") ? 1 : 0,
+    scopeType,
+    scopeType === "employer" ? text(formData, "scope_key") : "",
   );
   revalidatePath("/profile");
 }
@@ -203,8 +208,11 @@ export async function deleteSourceAction(formData: FormData): Promise<void> {
 }
 
 export async function runWorkflowAction(formData: FormData): Promise<void> {
+  const startedAt = Date.now();
   const slot = text(formData, "slot") || "manual";
   const result = await runCollection(slot);
+  const remainingPreviewTime = 10_400 - (Date.now() - startedAt);
+  if (remainingPreviewTime > 0) await new Promise((resolve) => setTimeout(resolve, remainingPreviewTime));
   revalidatePath("/");
   revalidatePath("/jobs");
   revalidatePath("/queue");
@@ -218,7 +226,7 @@ export async function addManualJobAction(formData: FormData): Promise<void> {
   const title = text(formData, "title");
   const description = text(formData, "description");
   const url = text(formData, "url");
-  if (!company || !title || !description) return;
+  if (!company || !title || !url) return;
   const externalId = createHash("sha256").update(`${company}|${title}|${url || description.slice(0, 100)}`).digest("hex").slice(0, 20);
   const existing = url
     ? db.prepare("SELECT id FROM jobs WHERE source_type = 'manual' AND canonical_url = ?").get(url) as { id: number } | undefined
@@ -316,7 +324,7 @@ export async function updateResumeStatusAction(formData: FormData): Promise<void
     status,
     id,
   );
-  if (status === "approved") ensureReadyApplicationForResume(id);
+  if (status === "approved") ensurePreparingApplicationForResume(id);
   revalidatePath("/queue");
   revalidatePath("/applications");
   revalidatePath(`/resumes/${id}`);
@@ -343,13 +351,69 @@ export async function saveAndApproveResumeAction(formData: FormData): Promise<vo
     resume.contentJson,
     resume.id,
   );
-  ensureReadyApplicationForResume(resume.id);
+  ensurePreparingApplicationForResume(resume.id);
   revalidatePath(`/resumes/${resume.id}`);
   revalidatePath("/queue");
   revalidatePath("/applications");
   revalidatePath("/jobs");
   const row = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resume.id) as { job_id: number } | undefined;
-  redirect(row ? `/jobs/${row.job_id}?tab=resume` : `/resumes/${resume.id}`);
+  redirect(row ? `/jobs/${row.job_id}?tab=cover-letter` : "/queue");
+}
+
+export async function approveCoverLetterAction(formData: FormData): Promise<void> {
+  const applicationId = Number(text(formData, "application_id"));
+  const content = text(formData, "cover_letter_content")
+    .replace(/\u2014/g, "-")
+    .replace(/\u2013/g, "-");
+  if (!Number.isFinite(applicationId) || content.length < 80 || content.length > 6_000) return;
+  const application = db.prepare(`
+    SELECT applications.id, applications.job_id
+    FROM applications
+    JOIN resume_versions ON resume_versions.id = applications.resume_version_id
+    WHERE applications.id = ? AND resume_versions.status = 'approved'
+  `).get(applicationId) as { id: number; job_id: number } | undefined;
+  if (!application) return;
+  db.prepare(`
+    INSERT INTO cover_letters (application_id, content, generation_method, evidence_json, status)
+    VALUES (?, ?, 'Written manually', '{}', 'approved')
+    ON CONFLICT(application_id) DO UPDATE SET
+      content = excluded.content,
+      status = 'approved',
+      updated_at = CURRENT_TIMESTAMP
+  `).run(applicationId, content);
+  db.prepare(`
+    UPDATE applications
+    SET status = CASE WHEN status = 'ready_to_apply' THEN 'preparing' ELSE status END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(applicationId);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'preparing', 'Cover letter approved. Final application approval is pending.')").run(applicationId);
+  revalidatePath(`/jobs/${application.job_id}`);
+  revalidatePath("/queue");
+  revalidatePath("/applications");
+  redirect(`/jobs/${application.job_id}?tab=cover-letter`);
+}
+
+export async function approveToApplyAction(formData: FormData): Promise<void> {
+  const applicationId = Number(text(formData, "application_id"));
+  if (!Number.isFinite(applicationId)) return;
+  const application = db.prepare(`
+    SELECT applications.id, applications.job_id
+    FROM applications
+    JOIN resume_versions ON resume_versions.id = applications.resume_version_id
+    JOIN cover_letters ON cover_letters.application_id = applications.id
+    WHERE applications.id = ?
+      AND resume_versions.status = 'approved'
+      AND cover_letters.status = 'approved'
+  `).get(applicationId) as { id: number; job_id: number } | undefined;
+  if (!application) return;
+  db.prepare("UPDATE applications SET status = 'ready_to_apply', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(applicationId);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', 'Resume and cover letter approved for application.')").run(applicationId);
+  revalidatePath(`/jobs/${application.job_id}`);
+  revalidatePath("/queue");
+  revalidatePath("/applications");
+  revalidatePath("/");
+  redirect(`/jobs/${application.job_id}?tab=cover-letter&ready=1`);
 }
 
 export async function createApplicationAction(formData: FormData): Promise<void> {

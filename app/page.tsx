@@ -31,12 +31,36 @@ export default function DashboardPage() {
   const profile = db.prepare("SELECT * FROM candidate_profile WHERE id = 1").get() as CandidateProfile;
   if (!profile.onboarding_complete) redirect("/onboarding");
 
+  const minimumScore = Number(getSetting("minimum_queue_score", "65"));
   const jobsToday = count("SELECT COUNT(*) AS count FROM jobs WHERE eligibility_status = 'eligible' AND date(first_seen_at, 'localtime') = date('now', 'localtime')");
-  const queueCount = count(`SELECT COUNT(*) AS count FROM jobs WHERE eligibility_status = 'eligible' AND score >= ${Number(getSetting("minimum_queue_score", "65"))} AND status NOT IN ('irrelevant', 'dismissed', 'archived')`);
-  const appliedCount = count("SELECT COUNT(*) AS count FROM applications WHERE status NOT IN ('ready_to_apply', 'archived')");
-  const interviewCount = count("SELECT COUNT(*) AS count FROM applications WHERE status IN ('recruiter_screen', 'interview', 'offer')");
+  const readyToPrepareCount = count(`
+    SELECT COUNT(*) AS count
+    FROM jobs
+    WHERE eligibility_status = 'eligible'
+      AND score >= ${minimumScore}
+      AND status NOT IN ('irrelevant', 'dismissed', 'archived')
+      AND id NOT IN (SELECT job_id FROM resume_versions)
+      AND id NOT IN (SELECT job_id FROM applications)
+  `);
+  const approvedToApplyCount = count(`
+    SELECT COUNT(*) AS count
+    FROM applications
+    JOIN resume_versions ON resume_versions.id = applications.resume_version_id
+    WHERE applications.status = 'ready_to_apply'
+      AND resume_versions.status = 'approved'
+  `);
+  const submittedCount = count("SELECT COUNT(*) AS count FROM applications WHERE applied_at IS NOT NULL");
   const followUpCount = count("SELECT COUNT(*) AS count FROM applications WHERE follow_up_at IS NOT NULL AND datetime(follow_up_at) <= datetime('now', '+1 day') AND status NOT IN ('rejected', 'withdrawn', 'offer', 'archived')");
-  const recentJobs = db.prepare("SELECT * FROM jobs WHERE eligibility_status = 'eligible' AND status NOT IN ('irrelevant', 'dismissed', 'archived') ORDER BY first_seen_at DESC, score DESC LIMIT 6").all() as Job[];
+  const recentJobs = db.prepare(`
+    SELECT * FROM jobs
+    WHERE eligibility_status = 'eligible'
+      AND score >= ?
+      AND status NOT IN ('irrelevant', 'dismissed', 'archived')
+      AND id NOT IN (SELECT job_id FROM resume_versions)
+      AND id NOT IN (SELECT job_id FROM applications)
+    ORDER BY first_seen_at DESC, score DESC
+    LIMIT 6
+  `).all(minimumScore) as Job[];
   const lastRun = db.prepare(`
     SELECT collection_runs.*,
       (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'eligible') AS eligible_jobs,
@@ -77,9 +101,9 @@ export default function DashboardPage() {
 
       <section className="metric-grid" aria-label="Search metrics">
         <div className="card metric"><span className="metric-label">New jobs today</span><strong className="metric-value">{jobsToday}</strong><span className="metric-note">Across active sources</span></div>
-        <div className="card metric"><span className="metric-label">Ready to review</span><strong className="metric-value">{queueCount}</strong><span className="metric-note">Passed filters and score threshold</span></div>
-        <div className="card metric"><span className="metric-label">Applications</span><strong className="metric-value">{appliedCount}</strong><span className="metric-note">Submitted in this search</span></div>
-        <div className="card metric"><span className="metric-label">Active conversations</span><strong className="metric-value">{interviewCount}</strong><span className="metric-note">Screens, interviews, and offers</span></div>
+        <div className="card metric"><span className="metric-label">Ready to prepare</span><strong className="metric-value">{readyToPrepareCount}</strong><span className="metric-note">Eligible jobs without a tailored resume</span></div>
+        <div className="card metric"><span className="metric-label">Approved to apply</span><strong className="metric-value">{approvedToApplyCount}</strong><span className="metric-note">Approved resumes awaiting submission</span></div>
+        <div className="card metric"><span className="metric-label">Submitted</span><strong className="metric-value">{submittedCount}</strong><span className="metric-note">Confirmed application submissions</span></div>
       </section>
 
       <div className="dashboard-grid">
@@ -92,21 +116,19 @@ export default function DashboardPage() {
             {recentJobs.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Role</th><th>Profile match</th><th>Status</th><th>Application</th><th /></tr></thead>
+                  <thead><tr><th>Role</th><th>Profile match</th><th>Next step</th></tr></thead>
                   <tbody>
                     {recentJobs.map((job) => (
                       <tr key={job.id}>
                         <td><span className="job-title">{job.title}</span><span className="job-meta">{job.company} · {job.location || "Location not listed"}</span></td>
                         <td><ScoreBadge score={job.score} passed={job.hard_filter_pass !== 0} /></td>
-                        <td><StatusPill status={job.status} /></td>
-                        <td>{job.apply_url ? <a className="text-link" href={job.apply_url} target="_blank" rel="noreferrer">Apply</a> : <span className="muted">Unavailable</span>}</td>
-                        <td><Link className="text-link" href={`/jobs/${job.id}`}>Review</Link></td>
+                        <td><Link className="button secondary small" href={`/jobs/${job.id}`}>Review and prepare</Link></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : <EmptyState title="No jobs collected yet" body="Fetch new jobs to search automatically from your target role and location." href="/sources" action="View job sources" />}
+            ) : <EmptyState title="No jobs ready to prepare" body="There are no eligible jobs without a tailored resume right now." href="/jobs" action="Review all jobs" />}
           </section>
         </div>
 
@@ -131,7 +153,8 @@ export default function DashboardPage() {
           <section className="card">
             <div className="card-header"><div><h2>Next actions</h2><p>Keep the search moving</p></div></div>
             <div className="card-body stack">
-              <Link className="button secondary" href="/queue">Review {queueCount} matched jobs</Link>
+              <Link className="button secondary" href="/jobs">Review {readyToPrepareCount} jobs</Link>
+              <Link className="button secondary" href="/queue#approved-to-apply">Apply to {approvedToApplyCount} approved jobs</Link>
               <Link className="button secondary" href="/applications">Handle {followUpCount} follow-ups</Link>
               <Link className="button secondary" href="/profile">Strengthen truth bank</Link>
             </div>

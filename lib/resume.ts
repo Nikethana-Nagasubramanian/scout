@@ -3,6 +3,11 @@ import PDFDocument from "pdfkit";
 import { db, getSetting } from "@/lib/database";
 import { prioritizeResumeWithOllama } from "@/lib/local-ai";
 import { categorizeResumeSkills, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
+import {
+  ensureResumeBlockIds,
+  isScoutGeneratedResumeSection,
+  stripResumeBulletPrefix,
+} from "@/lib/resume-blocks";
 import type { CandidateFact, CandidateProfile, Job, ResumeContent } from "@/lib/types";
 import { normalizeText, parseList } from "@/lib/utils";
 
@@ -137,12 +142,6 @@ export function buildResumeContent(job: Job, profile: CandidateProfile, facts: C
   const parsedSections = parseResumeSections(profile.base_resume_text, profile);
   const parsedSummary = parsedSections.find((section) => section.title === "SUMMARY")?.lines.map((line) => line.text).join(" ") || "";
   const contentSections = parsedSections.filter((section) => section.title !== "SUMMARY" && section.title !== "SKILLS");
-  if (selected.length) {
-    contentSections.push({
-      title: "ADDITIONAL VERIFIED HIGHLIGHTS",
-      lines: selected.map((fact) => ({ text: fact.claim, kind: "bullet" as const })),
-    });
-  }
 
   const commonKeywords = [
     "accessibility",
@@ -166,7 +165,7 @@ export function buildResumeContent(job: Job, profile: CandidateProfile, facts: C
     .filter(Boolean)
     .join(" | ");
 
-  return {
+  return ensureResumeBlockIds({
     candidateName: profile.full_name,
     contactLine,
     targetTitle: job.title,
@@ -180,7 +179,7 @@ export function buildResumeContent(job: Job, profile: CandidateProfile, facts: C
       includedKeywords,
       unsupportedKeywords,
     },
-  };
+  });
 }
 
 export async function createResumeVersion(jobId: number): Promise<number> {
@@ -212,21 +211,15 @@ export async function createResumeVersion(jobId: number): Promise<number> {
   return Number(result.lastInsertRowid);
 }
 
-function groupedFacts(content: ResumeContent): Map<string, ResumeContent["facts"]> {
-  const groups = new Map<string, ResumeContent["facts"]>();
-  for (const fact of content.facts) {
-    const existing = groups.get(fact.category) || [];
-    existing.push(fact);
-    groups.set(fact.category, existing);
-  }
-  return groups;
-}
-
 function resumeSections(content: ResumeContent): ResumeSection[] {
-  if (content.sections?.length) return content.sections;
-  return [...groupedFacts(content)].map(([category, facts]) => ({
-    title: category.toUpperCase(),
-    lines: facts.map((fact) => ({ text: fact.claim, kind: "bullet" as const })),
+  return (content.sections || [])
+    .filter((section) => !isScoutGeneratedResumeSection(section.title))
+    .map((section) => ({
+    ...section,
+    lines: section.lines.map((line) => ({
+      ...line,
+      text: line.kind === "bullet" ? stripResumeBulletPrefix(line.text) : line.text,
+    })),
   }));
 }
 

@@ -1,44 +1,40 @@
-# Design QA
+# Scout shell, Jobs search, and results QA
 
-## Source and state
+Reference: Paper components 9ZP-2, A0W-2, A0V-2, and A1L-2 supplied by the user.
 
-- Source visual truth: `/private/var/folders/6h/2fzc9hfx7l97qsk5hp3mtgqc0000gn/T/TemporaryItems/NSIRD_screencaptureui_wcbGwd/Screenshot 2026-08-13 at 1.39.54 PM.png`
-- Browser implementation: `/private/tmp/scout-jobs-cleanup-final.jpg`
-- Full comparison: `/private/tmp/scout-jobs-cleanup-comparison.jpg`
-- Focused table comparison: `/private/tmp/scout-jobs-cleanup-table-comparison.jpg`
-- Source image: 2880 by 1636 pixels
-- Implementation image: 1873 by 1164 pixels
-- Requested browser viewport: 2048 by 1164 CSS pixels
-- Density normalization: both images were scaled proportionally into equal comparison columns. The focused comparison uses matching table regions.
-- State: Jobs page, Eligible only, Active only, All sources, three opportunities.
+## Verified
 
-## Findings
+- Search, status selection, and the segmented profile filters match the supplied 36px control height.
+- Every authenticated page uses the shared #515B41 shell with an exact 8px frame.
+- The white content surface fills the available viewport height, including pages with short content.
+- The document remains fixed while the white content surface owns vertical scrolling.
+- Scroll bounce reveals a white underlay, so the olive shell never flashes inside the content surface.
+- The sidebar remains fixed during desktop page scrolling.
+- Geist, Geist Mono, Archivo, and Young Serif are bundled and loaded by the root layout.
+- Every main page heading uses Young Serif at 32px, a 40px line height, and weight 400.
+- Shared separators use the supplied 2, 6, 8, 10 dash sequence with rounded caps.
+- Search and filter text uses Geist at exactly 14px with an 18px line height.
+- The Needs review, Eligible, and Filtered segmented controls submit real filters.
+- Each job uses the supplied three-column content, explanation, and action layout.
+- Job titles use Young Serif at 18px with a 24px line height.
+- Job metadata and explanations use Geist at 14px with an 18px line height.
+- Profile match values use Young Serif at 24px with a 30px line height.
+- Action controls use Archivo at 14px with a 24px line height.
+- Job actions reflow below the row at narrower desktop widths, and the loading label stays within the result container.
+- The supplied dashed separator asset appears between job rows.
+- Existing application, resume preparation, and rejection actions remain functional.
+- Fetch summaries start collapsed while preserving the key run metrics in the summary row.
+- Manual job import opens from the Jobs header in a centered, accessible dialog.
+- The former inline manual-import card is removed from the Jobs content flow.
+- Manual-import fields, text, spacing, separators, and actions use Scout's shared typography and control styling.
+- The manual-import dialog closes through its X control, Cancel, Escape, or a pointer press outside the dialog.
+- Company, job title, and job URL are the only required manual-import inputs.
+- The manual-import header separator reaches both dialog edges, and the redundant separator below the description is removed.
+- Native select elements retain keyboard and screen-reader behavior while using one caret with a consistent 14px right inset.
+- Forced-colors mode restores the platform-native select appearance.
+- The manual fetch overlay holds each of its four truthful workflow states for approximately 2.6 seconds.
+- The review state says "Reviewing roles" because collection does not currently stream a trustworthy live role count.
 
-No actionable P0, P1, or P2 findings remain.
-
-- Typography: existing Scout type scale, weights, line heights, and table hierarchy remain unchanged.
-- Spacing: removing secondary source text and three inline links reduces row height and keeps the decision column easier to scan.
-- Colors: source badges and semantic match and signal colors remain unchanged.
-- Images and assets: this table contains no image assets.
-- Copy: only the source badge remains in Source. Posting, Apply, Details, and redundant source descriptions are removed.
-- Interaction: Prepare application and the state-aware continuation buttons remain the primary path into the central job workspace. Reject remains available as the secondary decision.
-- Accessibility: the remaining decisions retain semantic button and link behavior, accessible names, and visible focus styles.
-
-## Comparison history
-
-1. The source showed a source badge followed by a redundant source description and three links.
-2. The Source cell was reduced to the source badge only.
-3. Posting, Apply, and Details were removed because those actions now live in the central workspace.
-4. The revised browser capture confirms that all three rows use the same simplified hierarchy.
-
-## Verification
-
-- The Jobs table rendered with only the source badges in the Source column.
-- The browser DOM contains no Posting, Apply, or Details actions in these job rows.
-- Prepare application and Reject remain present for each eligible opportunity.
-- `pnpm run verify` passed.
-- 10 test files and 83 tests passed.
-- TypeScript, ESLint, production build, and the no em dash check passed.
-- No state-changing controls were submitted during QA.
+No actionable P0, P1, or P2 differences remain for this scoped pass.
 
 final result: passed

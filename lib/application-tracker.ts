@@ -6,6 +6,7 @@ export function partitionTrackedApplications<T extends TrackedApplication>(appli
   return {
     activeApplications: applications.filter((application) => ![
       "needs_review",
+      "preparing",
       "blocked",
       "expired",
       "ineligible",

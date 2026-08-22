@@ -300,7 +300,7 @@ db.exec(`
 
 db.exec(`
   DROP INDEX IF EXISTS jobs_gmail_external_unique;
-  CREATE UNIQUE INDEX jobs_gmail_external_unique
+  CREATE UNIQUE INDEX IF NOT EXISTS jobs_gmail_external_unique
     ON jobs(source_type, external_id)
     WHERE source_id IS NULL AND source_type IN ('gmail_indeed', 'gmail_builtin', 'gmail_newsletter', 'gmail_alert');
 `);
@@ -372,6 +372,8 @@ ensureColumn("discovery_sources", "query_cursor", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("company_discovery_sources", "include_companies", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("company_discovery_sources", "exclude_companies", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("cover_letters", "candidate_note", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("candidate_facts", "scope_type", "TEXT NOT NULL DEFAULT 'career'");
+ensureColumn("candidate_facts", "scope_key", "TEXT NOT NULL DEFAULT ''");
 db.exec(`
   CREATE INDEX IF NOT EXISTS jobs_eligibility_index
     ON jobs(eligibility_status, score DESC, first_seen_at DESC);

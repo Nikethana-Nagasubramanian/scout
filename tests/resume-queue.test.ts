@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { resumePdfFilename } from "@/lib/resume-filename";
+import { coverLetterPdfFilename, resumePdfFilename } from "@/lib/resume-filename";
 import { partitionResumeQueue } from "@/lib/resume-queue";
 
 describe("resumePdfFilename", () => {
   it("uses the candidate prefix and a safe company segment", () => {
-    expect(resumePdfFilename("Fieldguide")).toBe("NikethanaNN_Resume_Fieldguide.pdf");
-    expect(resumePdfFilename("Brown Brothers & Harriman")).toBe("NikethanaNN_Resume_Brown_Brothers_Harriman.pdf");
-    expect(resumePdfFilename("  ")).toBe("NikethanaNN_Resume_Company.pdf");
+    expect(resumePdfFilename("Fieldguide")).toBe("Nikethana_Resume_Fieldguide.pdf");
+    expect(resumePdfFilename("Brown Brothers & Harriman")).toBe("Nikethana_Resume_Brown_Brothers_Harriman.pdf");
+    expect(resumePdfFilename("  ")).toBe("Nikethana_Resume_Company.pdf");
+  });
+
+  it("uses the cover letter naming convention", () => {
+    expect(coverLetterPdfFilename("Fieldguide")).toBe("Nikethana_CoverLetter_Fieldguide.pdf");
+    expect(coverLetterPdfFilename("Brown Brothers & Harriman")).toBe("Nikethana_CoverLetter_Brown_Brothers_Harriman.pdf");
   });
 });
 
@@ -41,5 +46,13 @@ describe("partitionResumeQueue", () => {
     ]);
 
     expect(queue.approvedGroups.map((group) => group[0].job_id)).toEqual([7]);
+  });
+
+  it("keeps an approved resume visible while the application package is being prepared", () => {
+    const queue = partitionResumeQueue([
+      { id: 3, job_id: 9, status: "approved", application_status: "preparing" },
+    ]);
+
+    expect(queue.approvedGroups.map((group) => group[0].job_id)).toEqual([9]);
   });
 });

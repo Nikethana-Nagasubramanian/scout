@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 interface CoverLetterResponse {
@@ -19,6 +20,9 @@ interface CoverLetterEditorProps {
   initialMethod: string;
   initialStatus: string;
   initialCandidateNote: string;
+  defaultOpen?: boolean;
+  approvalFormId?: string;
+  workspaceMode?: boolean;
 }
 
 export function CoverLetterEditor({
@@ -28,7 +32,11 @@ export function CoverLetterEditor({
   initialMethod,
   initialStatus,
   initialCandidateNote,
+  defaultOpen = false,
+  approvalFormId,
+  workspaceMode = false,
 }: CoverLetterEditorProps) {
+  const router = useRouter();
   const [content, setContent] = useState(initialContent);
   const [savedContent, setSavedContent] = useState(initialContent);
   const [method, setMethod] = useState(initialMethod);
@@ -37,8 +45,10 @@ export function CoverLetterEditor({
   const [notice, setNotice] = useState("");
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(defaultOpen);
   const dirty = content !== savedContent;
   const wordCount = content.split(/\s+/).filter(Boolean).length;
+  const editorFormId = `cover-letter-editor-${applicationId}`;
 
   async function generate(): Promise<void> {
     setGenerating(true);
@@ -56,6 +66,7 @@ export function CoverLetterEditor({
       setMethod(payload.coverLetter.generation_method || "Generated draft");
       setStatus(payload.coverLetter.status || "draft");
       setNotice("Draft generated. Read it aloud, edit anything that does not sound like you, then save.");
+      router.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Cover letter generation failed");
     } finally {
@@ -79,6 +90,7 @@ export function CoverLetterEditor({
       setMethod(payload.coverLetter.generation_method || method);
       setStatus(payload.coverLetter.status || "edited");
       setNotice("Saved.");
+      router.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Cover letter could not be saved");
     } finally {
@@ -96,8 +108,71 @@ export function CoverLetterEditor({
     }
   }
 
+  const body = (
+    <form
+      className="cover-letter-body"
+      id={editorFormId}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <div className="cover-letter-interest-heading">
+        <h2>Why are you interested in {company}? <span>(optional)</span></h2>
+        <p>A line or two in your own words makes the letter sound like you. Or leave it blank and Scout reads {company}&apos;s site for its mission and values, then writes the angle from those and your approved resume.</p>
+      </div>
+
+      {!content ? (
+        <label className="cover-letter-interest-note">
+          <span className="sr-only">Why {company} interests you</span>
+          <textarea
+            aria-label={`Why ${company} interests you`}
+            onChange={(event) => setCandidateNote(event.target.value)}
+            placeholder={`Their focus on improving customer experience feels similar to my work at GrowthFactor`}
+            rows={4}
+            value={candidateNote}
+          />
+        </label>
+      ) : candidateNote.trim() ? null : (
+        <p className="cover-letter-origin-note">You did not add a note, so Scout wrote the opening from {company}&apos;s mission and values plus your approved resume. Edit anything before saving.</p>
+      )}
+
+      {content ? (
+        <textarea
+          aria-label={`Cover letter for ${company}`}
+          className="cover-letter-content"
+          form={approvalFormId}
+          name="cover_letter_content"
+          onChange={(event) => setContent(event.target.value)}
+          rows={16}
+          value={content}
+        />
+      ) : null}
+
+      <div className="cover-letter-actions">
+        {content ? (
+          <button className="button cover-letter-primary" disabled={!dirty || generating || saving} type="submit">
+            {saving ? "Saving..." : "Save Cover Letter"}
+          </button>
+        ) : (
+          <button className="button cover-letter-primary" disabled={generating || saving} onClick={generate} type="button">
+            {generating ? <><span className="spinner" aria-hidden="true" /> Drafting...</> : "Generate Cover Letter"}
+          </button>
+        )}
+        {content ? <button className="button secondary" disabled={generating || saving} onClick={generate} type="button">Regenerate</button> : null}
+        <span className="cover-letter-trust-note">Scout never invents personal connections or experience.</span>
+        {content ? <button className="button ghost cover-letter-utility" onClick={copy} type="button">Copy</button> : null}
+        {savedContent ? <a className="button ghost cover-letter-utility" href={`/api/applications/${applicationId}/cover-letter/pdf`}>PDF</a> : null}
+      </div>
+      {method && content ? <small className="cover-letter-method">{method} · {wordCount} words · {dirty ? "Unsaved edits" : status.replaceAll("_", " ")}</small> : null}
+      {notice ? <p className="cover-letter-notice" aria-live="polite">{notice}</p> : null}
+    </form>
+  );
+
+  if (workspaceMode) return <section className="cover-letter-workspace cover-letter-workspace-page">{body}</section>;
+
   return (
-    <details className="cover-letter-workspace">
+    <details className="cover-letter-workspace" onToggle={(event) => setExpanded(event.currentTarget.open)} open={expanded}>
       <summary>
         <span>
           <strong>Cover letter</strong>
@@ -105,41 +180,7 @@ export function CoverLetterEditor({
         </span>
         <span className="cover-letter-company">{company}</span>
       </summary>
-      <div className="cover-letter-body">
-        <div className="cover-letter-intro">
-          <p>Scout uses the company mission, role requirements, and the approved resume linked to this application. It does not invent personal connections or experience.</p>
-          {method ? <small>{method}</small> : null}
-        </div>
-        <label className="cover-letter-interest-note">
-          <span>Why this company? <small>Optional, but this is what makes the letter sound like you.</small></span>
-          <textarea
-            aria-label={`Why ${company} interests you`}
-            onChange={(event) => setCandidateNote(event.target.value)}
-            placeholder="Example: Their focus on transparent financial products feels close to my trust-focused work at Inrupt."
-            rows={3}
-            value={candidateNote}
-          />
-        </label>
-        {content ? (
-          <textarea
-            aria-label={`Cover letter for ${company}`}
-            className="cover-letter-content"
-            onChange={(event) => setContent(event.target.value)}
-            rows={16}
-            value={content}
-          />
-        ) : null}
-        <div className="cover-letter-actions">
-          <button className="button secondary small" disabled={generating || saving} onClick={generate} type="button">
-            {generating ? <><span className="spinner" aria-hidden="true" /> Drafting...</> : content ? "Regenerate" : "Generate cover letter"}
-          </button>
-          {content ? <button className="button small" disabled={!dirty || generating || saving} onClick={save} type="button">{saving ? "Saving..." : "Save"}</button> : null}
-          {content ? <button className="button ghost small" onClick={copy} type="button">Copy</button> : null}
-          {savedContent ? <a className="button ghost small" href={`/api/applications/${applicationId}/cover-letter/pdf`}>Download PDF</a> : null}
-          {content ? <span className="job-meta">{wordCount} words</span> : null}
-        </div>
-        {notice ? <p className="cover-letter-notice" aria-live="polite">{notice}</p> : null}
-      </div>
+      {body}
     </details>
   );
 }

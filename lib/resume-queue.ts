@@ -6,7 +6,7 @@ export interface ResumeQueueRow {
 
 export function partitionResumeQueue<T extends ResumeQueueRow>(resumes: T[]) {
   const eligibleResumes = resumes.filter((resume) => {
-    return !resume.application_status || resume.application_status === "ready_to_apply";
+    return !resume.application_status || ["preparing", "ready_to_apply"].includes(resume.application_status);
   });
   const jobGroups = [...eligibleResumes.reduce((grouped, resume) => {
     const existing = grouped.get(resume.job_id) || [];

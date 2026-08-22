@@ -1,16 +1,8 @@
 import { generateCoverLetterPdf } from "@/lib/cover-letter";
 import { db } from "@/lib/database";
+import { coverLetterPdfFilename } from "@/lib/resume-filename";
 
 export const runtime = "nodejs";
-
-function filenameSegment(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[^\x00-\x7F]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 80) || "Company";
-}
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -45,7 +37,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     row.company,
     row.updated_at,
   );
-  const filename = `NikethanaNN_CoverLetter_${filenameSegment(row.company)}.pdf`;
+  const filename = coverLetterPdfFilename(row.company);
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",

@@ -26,11 +26,16 @@ export interface ResumeBulletSuggestion {
   originalBullet: string;
   suggestedBullet: string;
   reason: string;
+  blockId?: string;
+  evidenceFactIds?: number[];
 }
 
 export type ResumeRewriteTarget =
   | { kind: "summary" }
+  | { kind: "line"; sectionIndex: number; lineIndex: number }
   | { kind: "experience"; sectionIndex: number; entryLineIndex: number };
+
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 
 function parseStructuredResponse<T>(value: string): T {
   const cleaned = value
@@ -89,7 +94,7 @@ export async function prioritizeResumeWithOllama(
     }),
   ].join("\n");
 
-  const response = await fetch("http://127.0.0.1:11434/api/generate", {
+  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -122,6 +127,44 @@ function numericClaims(value: string): string[] {
   return value.match(/\b\d+(?:[.,]\d+)?%?\b/g) || [];
 }
 
+export function deterministicResumeSuggestion(
+  content: ResumeContent,
+  keyword: string,
+  target: ResumeRewriteTarget,
+  evidence = "",
+): ResumeBulletSuggestion | null {
+  const line = target.kind === "line" ? content.sections?.[target.sectionIndex]?.lines[target.lineIndex] : null;
+  const original = target.kind === "summary" ? content.summary : line?.text || "";
+  let suggested = "";
+  if (normalized(keyword) === "analytics" && /\banalysis\b/i.test(original)) {
+    suggested = original.replace(/\banalysis\b/i, "analytics");
+  } else if (normalized(keyword) === "collaboration" && /\bpartnered cross-functionally\b/i.test(original)) {
+    suggested = original.replace(/\bpartnered cross-functionally\b/i, "Collaborated cross-functionally");
+  } else if (normalized(keyword) === "collaboration" && /stakeholder interviews/i.test(original)) {
+    suggested = original.replace(
+      /Led end-to-end UX research \(surveys, moderated usability tests, stakeholder interviews\) to/i,
+      "Led end-to-end UX research in collaboration with stakeholders through surveys, moderated usability tests, and stakeholder interviews to",
+    );
+  } else if (target.kind === "summary" && normalized(keyword) === "saas" && /\bsaas\b/i.test(evidence)) {
+    suggested = /\bproducts at\b/i.test(original)
+      ? original.replace(/\bproducts at\b/i, "SaaS products at")
+      : original.replace(/\bproducts\b/i, "SaaS products");
+  }
+  if (!suggested || suggested === original || !normalized(suggested).includes(normalized(keyword))) return null;
+  if (numericClaims(original).join("|") !== numericClaims(suggested).join("|")) return null;
+  return {
+    supported: true,
+    keyword,
+    targetKind: target.kind === "summary" ? "summary" : "line",
+    sectionIndex: target.kind === "line" ? target.sectionIndex : -1,
+    lineIndex: target.kind === "line" ? target.lineIndex : -1,
+    sectionTitle: target.kind === "summary" ? "SUMMARY" : "PROFESSIONAL EXPERIENCE",
+    originalBullet: original,
+    suggestedBullet: suggested,
+    reason: "Scout matched the job's terminology to evidence already present in this passage without changing its meaning or metrics.",
+  };
+}
+
 export async function suggestResumeBulletWithOllama(
   content: ResumeContent,
   job: Job,
@@ -147,6 +190,7 @@ export async function suggestResumeBulletWithOllama(
     : allSections.flatMap((section, sectionIndex) => (
         section.lines.flatMap((line, lineIndex) => {
           if (line.kind !== "bullet" || !line.text.trim()) return [];
+          if (target.kind === "line" && (sectionIndex !== target.sectionIndex || lineIndex !== target.lineIndex)) return [];
           if (experienceTarget && experienceTarget.sectionIndex >= 0 && sectionIndex !== experienceTarget.sectionIndex) return [];
           if (experienceTarget && experienceTarget.entryLineIndex >= 0 && lineIndex <= experienceTarget.entryLineIndex) return [];
           if (experienceTarget && experienceTarget.entryLineIndex >= 0 && nextEntryIndex >= 0 && lineIndex >= nextEntryIndex) return [];
@@ -172,6 +216,9 @@ export async function suggestResumeBulletWithOllama(
       .map((line) => `${section.title}: ${line.text}`)),
   ].filter(Boolean).slice(0, 80);
 
+  const deterministic = deterministicResumeSuggestion(content, keyword, target, userEvidence);
+  if (deterministic) return deterministic;
+
   const prompt = [
     "You help a candidate truthfully tailor one selected resume passage.",
     "Return JSON only with supported, candidateId, suggestedBullet, and reason.",
@@ -196,7 +243,7 @@ export async function suggestResumeBulletWithOllama(
     }),
   ].join("\n");
 
-  const response = await fetch("http://127.0.0.1:11434/api/generate", {
+  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

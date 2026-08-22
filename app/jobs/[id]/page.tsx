@@ -1,9 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { approveJobAction, generateResumeAction, updateJobStatusAction } from "@/app/actions";
+import {
+  approveCoverLetterAction,
+  approveJobAction,
+  approveToApplyAction,
+  generateResumeAction,
+  updateJobStatusAction,
+} from "@/app/actions";
 import { ResumeEditor } from "@/components/ResumeEditor";
+import { CoverLetterEditor } from "@/components/CoverLetterEditor";
 import { ConfidenceBadge, ScoreBadge, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
+import { applicationWorkflowStage } from "@/lib/application-workflow";
 import { db } from "@/lib/database";
 import { inferRequiredExperience } from "@/lib/job-fit";
 import type { ConfidenceBreakdown, Job, ResumeContent, ScoreBreakdown } from "@/lib/types";
@@ -13,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 interface JobPageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ imported?: string; tab?: string }>;
+  searchParams: Promise<{ imported?: string; ready?: string; tab?: string }>;
 }
 
 interface ResumeRow {
@@ -25,12 +33,16 @@ interface ResumeRow {
 interface ApplicationRow {
   id: number;
   status: string;
+  cover_letter_content: string | null;
+  cover_letter_method: string | null;
+  cover_letter_status: string | null;
+  cover_letter_candidate_note: string | null;
 }
 
-type WorkspaceTab = "description" | "match" | "resume";
+type WorkspaceTab = "description" | "match" | "resume" | "cover-letter";
 
 function selectedTab(value: string | undefined): WorkspaceTab {
-  return value === "match" || value === "resume" ? value : "description";
+  return value === "match" || value === "resume" || value === "cover-letter" ? value : "description";
 }
 
 function salaryLabel(job: Job): string {
@@ -77,7 +89,16 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
     ORDER BY created_at DESC, id DESC
     LIMIT 1
   `).get(job.id) as ResumeRow | undefined;
-  const application = db.prepare("SELECT id, status FROM applications WHERE job_id = ?").get(job.id) as ApplicationRow | undefined;
+  const application = db.prepare(`
+    SELECT applications.id, applications.status,
+      cover_letters.content AS cover_letter_content,
+      cover_letters.generation_method AS cover_letter_method,
+      cover_letters.status AS cover_letter_status,
+      cover_letters.candidate_note AS cover_letter_candidate_note
+    FROM applications
+    LEFT JOIN cover_letters ON cover_letters.application_id = applications.id
+    WHERE applications.job_id = ?
+  `).get(job.id) as ApplicationRow | undefined;
   const resumeContent = latestResume ? safeJson<ResumeContent>(latestResume.content_json, {
     candidateName: "",
     contactLine: "",
@@ -96,23 +117,65 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
         ? "Lever application"
         : `${job.source_name || job.source_type} source`;
   const rejected = ["irrelevant", "dismissed", "archived"].includes(job.status);
+  const resumeApproved = latestResume?.status === "approved";
+  const workflowStage = applicationWorkflowStage({
+    resumeApproved,
+    coverLetterStatus: application?.cover_letter_status || null,
+    applicationStatus: application?.status || null,
+  });
+  const coverLetterApprovalFormId = application ? `cover-letter-approval-${application.id}` : undefined;
+  const coverLetterEditorFormId = application ? `cover-letter-editor-${application.id}` : undefined;
 
   return (
     <div className="page job-workspace-page">
       <header className="job-workspace-header">
-        <div>
-          <Link className="workspace-back-link" href="/jobs">Back to jobs</Link>
-          <h1>{job.title} <span aria-hidden="true">·</span> {job.company}</h1>
+        <div className="job-workspace-heading">
+          <div className="workspace-eyebrow-row">
+            <Link className="workspace-back-link" href="/jobs">Application {String(job.id).padStart(3, "0")}</Link>
+            <span>Source: {job.source_name || job.source_type}</span>
+          </div>
+          <h1>{job.title}</h1>
           <p className="job-workspace-meta">
+            <span>{job.company}</span>
             <span>{job.location || "Location not listed"}</span>
             <span>{salaryLabel(job)}</span>
             <span>{experienceLabel(job.description)}</span>
           </p>
         </div>
         <div className="job-workspace-actions">
-          {application && application.status !== "ready_to_apply" ? (
+          {resumeApproved && tab === "cover-letter" && latestResume ? (
+            <>
+              <button className="button secondary" disabled={!application?.cover_letter_content} form={coverLetterEditorFormId} type="submit">Save draft</button>
+              {workflowStage === "submitted" ? (
+                <Link className="button" href="/applications">View application</Link>
+              ) : workflowStage === "cover_letter" ? (
+                <form action={approveCoverLetterAction} id={coverLetterApprovalFormId}>
+                  <input type="hidden" name="application_id" value={application?.id || ""} />
+                  <button className="button" disabled={!application?.cover_letter_content} type="submit">Review &amp; approve</button>
+                </form>
+              ) : workflowStage === "approve_to_apply" ? (
+                <form action={approveToApplyAction}>
+                  <input type="hidden" name="application_id" value={application?.id || ""} />
+                  <button className="button" type="submit">Approve to apply</button>
+                </form>
+              ) : job.apply_url ? (
+                <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a>
+              ) : null}
+            </>
+          ) : tab === "resume" && latestResume && !resumeApproved && latestResume.status !== "rejected" ? (
+            <button className="button workspace-approve-button" type="submit" form={`resume-editor-${latestResume.id}`}>Approve Resume</button>
+          ) : tab === "resume" && resumeApproved ? (
+            <>
+              <a className="button secondary" href={`/api/resumes/${latestResume.id}/pdf`} download>Download Resume PDF</a>
+              <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Generate Cover Letter</Link>
+            </>
+          ) : workflowStage === "submitted" ? (
             <Link className="button" href="/applications">View application</Link>
-          ) : latestResume?.status === "approved" ? (
+          ) : workflowStage === "cover_letter" ? (
+            <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Continue to Cover Letter</Link>
+          ) : workflowStage === "approve_to_apply" ? (
+            <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Approve to apply</Link>
+          ) : workflowStage === "ready_to_apply" ? (
             job.apply_url ? <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a> : null
           ) : latestResume && latestResume.status !== "rejected" ? (
             <Link className="button" href={`/jobs/${job.id}?tab=resume`}>Review resume</Link>
@@ -122,13 +185,13 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
               <ResumeSubmitButton className="button">Approve</ResumeSubmitButton>
             </form>
           )}
-          {!rejected ? (
+          {!rejected && tab !== "resume" && tab !== "cover-letter" ? (
             <form action={updateJobStatusAction}>
               <input type="hidden" name="id" value={job.id} />
               <input type="hidden" name="status" value="irrelevant" />
               <button className="button danger" type="submit">Reject</button>
             </form>
-          ) : <StatusPill status="rejected" />}
+          ) : rejected ? <StatusPill status="rejected" /> : null}
         </div>
       </header>
 
@@ -142,6 +205,9 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
         <Link className={tab === "description" ? "active" : ""} href={`/jobs/${job.id}`}>Job Description</Link>
         <Link className={tab === "match" ? "active" : ""} href={`/jobs/${job.id}?tab=match`}>Profile Match</Link>
         <Link className={tab === "resume" ? "active" : ""} href={`/jobs/${job.id}?tab=resume`}>Edit Resume</Link>
+        {resumeApproved ? (
+          <Link className={tab === "cover-letter" ? "active" : ""} href={`/jobs/${job.id}?tab=cover-letter`}>Cover Letter</Link>
+        ) : <span className="disabled" aria-disabled="true">Cover Letter</span>}
       </nav>
 
       {tab === "description" ? (
@@ -218,7 +284,6 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
             jobDescription={job.description}
             jobTitle={job.title}
             company={job.company}
-            applyUrl={job.apply_url}
             applicationStatus={application?.status || null}
             embedded
           />
@@ -230,6 +295,28 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
               <input type="hidden" name="job_id" value={job.id} />
               <ResumeSubmitButton>Generate tailored resume</ResumeSubmitButton>
             </form>
+          </section>
+        )
+      ) : null}
+
+      {tab === "cover-letter" ? (
+        application && latestResume?.status === "approved" ? (
+          <CoverLetterEditor
+            applicationId={application.id}
+            approvalFormId={coverLetterApprovalFormId}
+            company={job.company}
+            initialCandidateNote={application.cover_letter_candidate_note || ""}
+            initialContent={application.cover_letter_content || ""}
+            initialMethod={application.cover_letter_method || ""}
+            initialStatus={application.cover_letter_status || "not_started"}
+            defaultOpen
+            workspaceMode
+          />
+        ) : (
+          <section className="card workspace-empty-resume">
+            <h2>Approve the resume first</h2>
+            <p>Scout uses the approved resume, company mission, and role requirements to prepare a truthful cover letter for this application.</p>
+            <Link className="button" href={`/jobs/${job.id}?tab=resume`}>Review resume</Link>
           </section>
         )
       ) : null}

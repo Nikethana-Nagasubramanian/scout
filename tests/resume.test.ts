@@ -131,6 +131,7 @@ describe("buildResumeContent", () => {
     expect(content.audit.unsupportedKeywords).toContain("strategy");
     expect(content.skillCategories?.[0]).toEqual({ name: "Product Design", skills: ["Figma", "Research"] });
     expect(content.skillCategories?.flatMap((category) => category.skills)).toContain("Research");
+    expect(content.sections?.some((section) => section.title === "ADDITIONAL VERIFIED HIGHLIGHTS")).toBe(false);
   });
 
   it("preserves traditional sections and joins wrapped achievement lines", () => {

@@ -3,6 +3,7 @@ export type CollectionMode = "manual" | "automatic";
 export type JobStatus = "discovered" | "reviewing" | "shortlisted" | "irrelevant" | "dismissed" | "archived";
 export type ResumeStatus = "draft" | "approved" | "rejected";
 export type ApplicationStatus =
+  | "preparing"
   | "ready_to_apply"
   | "applied"
   | "follow_up_due"
@@ -45,7 +46,19 @@ export interface CandidateFact {
   claim: string;
   skills: string;
   verified: number;
+  scope_type?: "career" | "employer";
+  scope_key?: string;
   created_at: string;
+}
+
+export interface ResumeChange {
+  id: string;
+  blockId: string;
+  keyword: string;
+  originalText: string;
+  acceptedText: string;
+  createdAt: string;
+  source: "guided" | "manual";
 }
 
 export interface JobSource {
@@ -210,6 +223,7 @@ export interface ResumeContent {
   candidateName: string;
   contactLine: string;
   targetTitle: string;
+  summaryBlockId?: string;
   summary: string;
   skills: string[];
   skillCategories?: Array<{
@@ -223,12 +237,15 @@ export interface ResumeContent {
     claim: string;
   }>;
   sections?: Array<{
+    id?: string;
     title: string;
     lines: Array<{
+      id?: string;
       text: string;
       kind: "entry" | "bullet" | "text" | "divider";
     }>;
   }>;
+  changeHistory?: ResumeChange[];
   audit: {
     selectedFactIds: number[];
     includedKeywords: string[];

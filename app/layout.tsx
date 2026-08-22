@@ -1,4 +1,8 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/archivo";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
+import "@fontsource/young-serif";
 import { Nav } from "@/components/Nav";
 import "./globals.css";
 
