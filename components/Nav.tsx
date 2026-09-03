@@ -39,7 +39,7 @@ export function Nav() {
   return (
     <aside className="sidebar">
       <Link className="brand" href="/">
-        <Image className="brand-mark" src="/assets/scout-mark.svg" width={30} height={30} alt="" aria-hidden="true" />
+        <Image className="brand-mark" src="/brand/scout-mark-white-v1.png" width={30} height={30} alt="" aria-hidden="true" />
         <strong>Scout</strong>
       </Link>
       <nav className="nav-list" aria-label="Primary navigation">

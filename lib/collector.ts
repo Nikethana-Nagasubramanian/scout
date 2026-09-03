@@ -1041,7 +1041,9 @@ export function scoreAllJobs(): void {
   const jobs = db.prepare("SELECT * FROM jobs WHERE duplicate_of_job_id IS NULL").all() as Job[];
   const update = db.prepare(`
     UPDATE jobs
-    SET score = ?, hard_filter_pass = ?, eligibility_status = ?, score_breakdown = ?, match_summary = ?,
+    SET score = ?, hard_filter_pass = ?,
+      eligibility_status = CASE WHEN eligibility_override = 1 THEN eligibility_status ELSE ? END,
+      score_breakdown = ?, match_summary = ?,
       confidence_score = ?, confidence_breakdown = ?, confidence_summary = ?
     WHERE id = ?
   `);
@@ -1078,7 +1080,11 @@ export function scoreAllJobs(): void {
   syncRunEligibility();
 }
 
-function syncRunEligibility(runId?: number): void {
+export function clearEligibilityOverrides(): void {
+  db.prepare("UPDATE jobs SET eligibility_override = 0 WHERE eligibility_override = 1").run();
+}
+
+export function syncRunEligibility(runId?: number): void {
   const rows = db.prepare(`
     SELECT jobs.id, jobs.hard_filter_pass, jobs.eligibility_status, jobs.score_breakdown
     FROM jobs

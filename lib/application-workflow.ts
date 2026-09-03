@@ -1,7 +1,6 @@
 export type ApplicationWorkflowStage =
   | "resume"
   | "cover_letter"
-  | "approve_to_apply"
   | "ready_to_apply"
   | "submitted";
 
@@ -14,7 +13,6 @@ export function applicationWorkflowStage(input: {
     return "submitted";
   }
   if (!input.resumeApproved) return "resume";
-  if (input.coverLetterStatus !== "approved") return "cover_letter";
-  if (input.applicationStatus !== "ready_to_apply") return "approve_to_apply";
+  if (input.applicationStatus !== "ready_to_apply") return "cover_letter";
   return "ready_to_apply";
 }

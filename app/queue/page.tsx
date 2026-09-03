@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { createApplicationAction, generateResumeAction, updateJobStatusAction, updateResumeStatusAction } from "@/app/actions";
-import { ConfidenceBadge, EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
+import { createApplicationAction, generateResumeAction, updateResumeStatusAction } from "@/app/actions";
+import { EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
-import { db, getSetting } from "@/lib/database";
+import { db } from "@/lib/database";
 import { partitionResumeQueue } from "@/lib/resume-queue";
 import { resumeSkillCategories } from "@/lib/resume-skills";
-import type { Job, ResumeContent } from "@/lib/types";
+import type { ResumeContent } from "@/lib/types";
 import { formatDateTime, safeJson } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -110,16 +110,6 @@ function ResumeGroupList({ groups, openLatest = true }: { groups: ResumeRow[][];
 }
 
 export default function QueuePage() {
-  const minimumScore = Number(getSetting("minimum_queue_score", "65"));
-  const matchedJobs = db.prepare(`
-    SELECT * FROM jobs
-    WHERE eligibility_status = 'eligible'
-      AND (status = 'shortlisted' OR score >= ?)
-      AND status NOT IN ('irrelevant', 'dismissed', 'archived')
-      AND id NOT IN (SELECT job_id FROM resume_versions)
-    ORDER BY score DESC, first_seen_at DESC
-    LIMIT 25
-  `).all(minimumScore) as Job[];
   const resumes = db.prepare(`
     SELECT resume_versions.*, jobs.title, jobs.company, jobs.score, jobs.apply_url, jobs.description,
       applications.id AS application_id,
@@ -142,39 +132,25 @@ export default function QueuePage() {
     <div className="page">
       <PageHeader title="Resume queue" description="Decide which tailored resumes are ready to use. Applied jobs move to Applications." />
 
-      <div className="dashboard-grid">
-        <div className="stack">
-          <section className="card">
-            <div className="card-header"><div><h2>Pending decision</h2><p>Review the latest tailored resume for each job</p></div><StatusPill status={`${pendingGroups.length} pending`} /></div>
-            {pendingGroups.length ? <div className="card-body stack"><ResumeGroupList groups={pendingGroups} /></div> : <EmptyState title="No pending resumes" body="Prepare a job from the Jobs page to add its tailored resume here." href="/jobs" action="Review jobs" />}
+      <div className="stack">
+        <section className="card">
+          <div className="card-header"><div><h2>Pending decision</h2><p>Review the latest tailored resume for each job</p></div><StatusPill status={`${pendingGroups.length} pending`} /></div>
+          {pendingGroups.length ? <div className="card-body stack"><ResumeGroupList groups={pendingGroups} /></div> : <EmptyState title="No pending resumes" body="Prepare a job from the Jobs page to add its tailored resume here." href="/jobs" action="Review jobs" />}
+        </section>
+
+        {approvedGroups.length ? (
+          <section className="card" id="approved-to-apply">
+            <div className="card-header"><div><h2>Resume approved</h2><p>Finish the cover letter, then approve the complete application</p></div><StatusPill status={`${approvedGroups.length} approved`} /></div>
+            <div className="card-body stack"><ResumeGroupList groups={approvedGroups} /></div>
           </section>
+        ) : null}
 
-          {approvedGroups.length ? (
-            <section className="card" id="approved-to-apply">
-              <div className="card-header"><div><h2>Resume approved</h2><p>Finish the cover letter, then approve the complete application</p></div><StatusPill status={`${approvedGroups.length} approved`} /></div>
-              <div className="card-body stack"><ResumeGroupList groups={approvedGroups} /></div>
-            </section>
-          ) : null}
-
-          {rejectedGroups.length ? (
-            <section className="card rejected-resumes" id="rejected-resumes">
-              <div className="card-header"><div><h2>Rejected resumes</h2><p>Kept below the active queue in case you need to recover one</p></div><StatusPill status={`${rejectedGroups.length} rejected`} /></div>
-              <div className="card-body stack"><ResumeGroupList groups={rejectedGroups} openLatest={false} /></div>
-            </section>
-          ) : null}
-        </div>
-
-        <aside className="stack">
-          <section className="card">
-            <div className="card-header"><div><h2>Ready to prepare</h2><p>Eligible jobs with no tailored resume yet</p></div></div>
-            {matchedJobs.length ? <div className="card-body stack">{matchedJobs.map((job) => <article key={job.id}>
-              <div className="inline-actions"><ScoreBadge score={job.score} /><ConfidenceBadge score={job.confidence_score} /></div>
-              <Link className="job-title" href={`/jobs/${job.id}`}>{job.title}</Link><span className="job-meta">{job.company} · {job.location}</span>
-              <p className="muted">{job.match_summary}</p>
-              <div className="inline-actions"><Link className="button small" href={`/jobs/${job.id}`}>Prepare application</Link><form action={updateJobStatusAction}><input type="hidden" name="id" value={job.id} /><input type="hidden" name="status" value="dismissed" /><button className="button ghost small danger-text" type="submit">Dismiss</button></form></div>
-            </article>)}</div> : <EmptyState title="Queue is clear" body="Fetch new jobs or lower the score threshold in Automation." href="/settings" action="Review automation" />}
+        {rejectedGroups.length ? (
+          <section className="card rejected-resumes" id="rejected-resumes">
+            <div className="card-header"><div><h2>Rejected resumes</h2><p>Kept below the active queue in case you need to recover one</p></div><StatusPill status={`${rejectedGroups.length} rejected`} /></div>
+            <div className="card-body stack"><ResumeGroupList groups={rejectedGroups} openLatest={false} /></div>
           </section>
-        </aside>
+        ) : null}
       </div>
     </div>
   );

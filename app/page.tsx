@@ -1,15 +1,25 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { runWorkflowAction } from "@/app/actions";
-import { EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
+import { Button, EmptyState, PageHeader, ScoreBadge, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db, getSetting } from "@/lib/database";
-import type { CandidateProfile, Job } from "@/lib/types";
+import type { CandidateProfile, Job, ResumeStatus } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 interface MetricRow { count: number }
+interface LatestResumeRow {
+  resume_id: number;
+  job_id: number;
+  job_title: string;
+  job_company: string;
+  resume_status: ResumeStatus;
+  application_status: string | null;
+  applied_at: string | null;
+  updated_at: string;
+}
 interface CollectionRun {
   completed_at: string | null;
   status: string;
@@ -32,7 +42,7 @@ export default function DashboardPage() {
   if (!profile.onboarding_complete) redirect("/onboarding");
 
   const minimumScore = Number(getSetting("minimum_queue_score", "65"));
-  const jobsToday = count("SELECT COUNT(*) AS count FROM jobs WHERE eligibility_status = 'eligible' AND date(first_seen_at, 'localtime') = date('now', 'localtime')");
+  const appliedLast24hCount = count("SELECT COUNT(*) AS count FROM applications WHERE applied_at IS NOT NULL AND datetime(applied_at) >= datetime('now', '-1 day')");
   const readyToPrepareCount = count(`
     SELECT COUNT(*) AS count
     FROM jobs
@@ -49,7 +59,6 @@ export default function DashboardPage() {
     WHERE applications.status = 'ready_to_apply'
       AND resume_versions.status = 'approved'
   `);
-  const submittedCount = count("SELECT COUNT(*) AS count FROM applications WHERE applied_at IS NOT NULL");
   const followUpCount = count("SELECT COUNT(*) AS count FROM applications WHERE follow_up_at IS NOT NULL AND datetime(follow_up_at) <= datetime('now', '+1 day') AND status NOT IN ('rejected', 'withdrawn', 'offer', 'archived')");
   const recentJobs = db.prepare(`
     SELECT * FROM jobs
@@ -72,9 +81,23 @@ export default function DashboardPage() {
     LIMIT 1
   `).get() as CollectionRun | undefined;
   const mode = getSetting("collection_mode", "manual");
+  const latestResume = db.prepare(`
+    SELECT resume_versions.id AS resume_id, resume_versions.job_id AS job_id,
+      jobs.title AS job_title, jobs.company AS job_company,
+      resume_versions.status AS resume_status,
+      applications.status AS application_status, applications.applied_at AS applied_at,
+      resume_versions.updated_at AS updated_at
+    FROM resume_versions
+    INNER JOIN jobs ON jobs.id = resume_versions.job_id
+    LEFT JOIN applications ON applications.job_id = resume_versions.job_id
+    ORDER BY
+      CASE WHEN applications.applied_at IS NOT NULL THEN 0 ELSE 1 END,
+      COALESCE(applications.applied_at, resume_versions.updated_at) DESC
+    LIMIT 1
+  `).get() as LatestResumeRow | undefined;
 
   return (
-    <div className="page">
+    <div className="page dashboard-page">
       <PageHeader
         eyebrow="30 day search"
         title={`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, ${profile.full_name.split(" ")[0] || "candidate"}.`}
@@ -100,10 +123,10 @@ export default function DashboardPage() {
       </section>
 
       <section className="metric-grid" aria-label="Search metrics">
-        <div className="card metric"><span className="metric-label">New jobs today</span><strong className="metric-value">{jobsToday}</strong><span className="metric-note">Across active sources</span></div>
+        <div className="card metric"><span className="metric-label">Fetched last run</span><strong className="metric-value">{lastRun?.jobs_found ?? 0}</strong><span className="metric-note">Roles scanned across active sources</span></div>
+        <div className="card metric"><span className="metric-label">Applied last 24h</span><strong className="metric-value">{appliedLast24hCount}</strong><span className="metric-note">Submissions in the past day</span></div>
         <div className="card metric"><span className="metric-label">Ready to prepare</span><strong className="metric-value">{readyToPrepareCount}</strong><span className="metric-note">Eligible jobs without a tailored resume</span></div>
-        <div className="card metric"><span className="metric-label">Approved to apply</span><strong className="metric-value">{approvedToApplyCount}</strong><span className="metric-note">Approved resumes awaiting submission</span></div>
-        <div className="card metric"><span className="metric-label">Submitted</span><strong className="metric-value">{submittedCount}</strong><span className="metric-note">Confirmed application submissions</span></div>
+        <div className="card metric"><span className="metric-label">Follow-ups due</span><strong className="metric-value">{followUpCount}</strong><span className="metric-note">Due within the next day</span></div>
       </section>
 
       <div className="dashboard-grid">
@@ -122,7 +145,7 @@ export default function DashboardPage() {
                       <tr key={job.id}>
                         <td><span className="job-title">{job.title}</span><span className="job-meta">{job.company} · {job.location || "Location not listed"}</span></td>
                         <td><ScoreBadge score={job.score} passed={job.hard_filter_pass !== 0} /></td>
-                        <td><Link className="button secondary small" href={`/jobs/${job.id}`}>Review and prepare</Link></td>
+                        <td><Button href={`/jobs/${job.id}`} variant="secondary" size="small">Review and prepare</Button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -133,6 +156,25 @@ export default function DashboardPage() {
         </div>
 
         <aside className="stack">
+          <section className="card">
+            <div className="card-header"><div><h2>Latest resume</h2><p>{latestResume?.applied_at ? "Most recently applied" : "Most recently tailored"}</p></div></div>
+            <div className="card-body">
+              {latestResume ? (
+                <div className="stack">
+                  <div>
+                    <span className="job-title">{latestResume.job_title}</span>
+                    <span className="job-meta">{latestResume.job_company}</span>
+                  </div>
+                  <div className="inline-actions">
+                    <StatusPill status={latestResume.application_status || latestResume.resume_status} />
+                    <span className="muted">{formatDateTime(latestResume.applied_at || latestResume.updated_at)}</span>
+                  </div>
+                  <Button href={`/jobs/${latestResume.job_id}?tab=resume`} variant="secondary">View resume</Button>
+                </div>
+              ) : <EmptyState title="No resume tailored yet" body="Prepare your first job to start a tailored resume." href="/jobs" action="Review jobs" />}
+            </div>
+          </section>
+
           <section className="card">
             <div className="card-header"><div><h2>Collection status</h2><p>{mode === "automatic" ? "Automatic collection is on" : "Manual collection is on"}</p></div><StatusPill status={mode} /></div>
             <div className="card-body">
@@ -146,17 +188,17 @@ export default function DashboardPage() {
                 </div>
               ) : null}
               {lastRun ? <Link className="text-link" href={`/jobs?run=${lastRun.id}`}>View fetched jobs</Link> : null}
-              <Link className="button secondary" href="/settings">Manage schedule</Link>
+              <Button href="/settings" variant="secondary">Manage schedule</Button>
             </div>
           </section>
 
           <section className="card">
             <div className="card-header"><div><h2>Next actions</h2><p>Keep the search moving</p></div></div>
             <div className="card-body stack">
-              <Link className="button secondary" href="/jobs">Review {readyToPrepareCount} jobs</Link>
-              <Link className="button secondary" href="/queue#approved-to-apply">Apply to {approvedToApplyCount} approved jobs</Link>
-              <Link className="button secondary" href="/applications">Handle {followUpCount} follow-ups</Link>
-              <Link className="button secondary" href="/profile">Strengthen truth bank</Link>
+              <Button href="/jobs" variant="secondary">Review {readyToPrepareCount} jobs</Button>
+              <Button href="/queue#approved-to-apply" variant="secondary">Apply to {approvedToApplyCount} approved jobs</Button>
+              <Button href="/applications" variant="secondary">Handle {followUpCount} follow-ups</Button>
+              <Button href="/profile" variant="secondary">Strengthen truth bank</Button>
             </div>
           </section>
         </aside>

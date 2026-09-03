@@ -12,7 +12,7 @@ export function ResumeSubmitButton({
   const { pending } = useFormStatus();
   return (
     <button className={className} type="submit" disabled={pending} aria-busy={pending}>
-      {pending ? <><span className="spinner" aria-hidden="true" /> Generating resume...</> : children}
+      {pending ? <><span className="spinner" aria-hidden="true" /> Generating...</> : children}
     </button>
   );
 }

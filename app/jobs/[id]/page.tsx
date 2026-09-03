@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  approveCoverLetterAction,
+  approveCoverLetterAndQueueAction,
   approveJobAction,
-  approveToApplyAction,
   generateResumeAction,
   updateJobStatusAction,
 } from "@/app/actions";
+import { ApproveToApplyButton } from "@/components/ApproveToApplyButton";
 import { ResumeEditor } from "@/components/ResumeEditor";
 import { CoverLetterEditor } from "@/components/CoverLetterEditor";
 import { ConfidenceBadge, ScoreBadge, StatusPill } from "@/components/UI";
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 interface JobPageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ imported?: string; ready?: string; tab?: string }>;
+  searchParams: Promise<{ imported?: string; tab?: string }>;
 }
 
 interface ResumeRow {
@@ -149,14 +149,9 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
               {workflowStage === "submitted" ? (
                 <Link className="button" href="/applications">View application</Link>
               ) : workflowStage === "cover_letter" ? (
-                <form action={approveCoverLetterAction} id={coverLetterApprovalFormId}>
+                <form action={approveCoverLetterAndQueueAction} id={coverLetterApprovalFormId}>
                   <input type="hidden" name="application_id" value={application?.id || ""} />
-                  <button className="button" disabled={!application?.cover_letter_content} type="submit">Review &amp; approve</button>
-                </form>
-              ) : workflowStage === "approve_to_apply" ? (
-                <form action={approveToApplyAction}>
-                  <input type="hidden" name="application_id" value={application?.id || ""} />
-                  <button className="button" type="submit">Approve to apply</button>
+                  <ApproveToApplyButton disabled={!application?.cover_letter_content}>Approve to apply</ApproveToApplyButton>
                 </form>
               ) : job.apply_url ? (
                 <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a>
@@ -173,8 +168,6 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
             <Link className="button" href="/applications">View application</Link>
           ) : workflowStage === "cover_letter" ? (
             <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Continue to Cover Letter</Link>
-          ) : workflowStage === "approve_to_apply" ? (
-            <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Approve to apply</Link>
           ) : workflowStage === "ready_to_apply" ? (
             job.apply_url ? <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a> : null
           ) : latestResume && latestResume.status !== "rejected" ? (

@@ -1,5 +1,61 @@
 import Link from "next/link";
 
+/** A 12-blade radial spinner (the same visual language sonner's toast loader uses). */
+export function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <span className={`cta-spinner ${className}`.trim()} role="status" aria-hidden="true">
+      {Array.from({ length: 12 }).map((_, index) => (
+        <i
+          key={index}
+          style={{
+            transform: `rotate(${index * 30}deg)`,
+            animationDelay: `${(index * (1.2 / 12) - 1.2).toFixed(3)}s`,
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonSize = "default" | "small";
+
+interface ButtonBaseProps {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  className?: string;
+  children: React.ReactNode;
+}
+
+function buttonClassName({ variant = "primary", size = "default", className }: ButtonBaseProps) {
+  return [
+    "button",
+    variant !== "primary" ? variant : "",
+    size === "small" ? "small" : "",
+    className || "",
+  ].filter(Boolean).join(" ");
+}
+
+/** Reusable CTA/button. Renders a <Link> when `href` is passed, otherwise a <button>. */
+export function Button({
+  href,
+  variant,
+  size,
+  className,
+  children,
+  ...rest
+}: ButtonBaseProps & ({ href: string } | { href?: undefined }) & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const classes = buttonClassName({ variant, size, className, children });
+  if (href) {
+    return <Link className={classes} href={href}>{children}</Link>;
+  }
+  return (
+    <button className={classes} type="button" {...rest}>
+      {children}
+    </button>
+  );
+}
+
 export function ScoreBadge({ score, passed = true }: { score: number | null; passed?: boolean }) {
   const value = score ?? 0;
   const tone = !passed ? "danger" : value >= 80 ? "strong" : value >= 65 ? "good" : "muted";
@@ -48,7 +104,7 @@ export function EmptyState({
       <span className="empty-icon">◇</span>
       <h3>{title}</h3>
       <p>{body}</p>
-      {href && action ? <Link className="button secondary" href={href}>{action}</Link> : null}
+      {href && action ? <Button href={href} variant="secondary">{action}</Button> : null}
     </div>
   );
 }

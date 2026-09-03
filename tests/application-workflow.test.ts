@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applicationWorkflowStage } from "@/lib/application-workflow";
 
 describe("applicationWorkflowStage", () => {
-  it("keeps resume, cover letter, and final application approval as separate steps", () => {
+  it("keeps resume and cover letter as separate steps, with a single approval into ready to apply", () => {
     expect(applicationWorkflowStage({
       resumeApproved: false,
       coverLetterStatus: null,
@@ -13,11 +13,6 @@ describe("applicationWorkflowStage", () => {
       coverLetterStatus: "edited",
       applicationStatus: "preparing",
     })).toBe("cover_letter");
-    expect(applicationWorkflowStage({
-      resumeApproved: true,
-      coverLetterStatus: "approved",
-      applicationStatus: "preparing",
-    })).toBe("approve_to_apply");
     expect(applicationWorkflowStage({
       resumeApproved: true,
       coverLetterStatus: "approved",

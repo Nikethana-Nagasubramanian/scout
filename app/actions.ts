@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
 import { db, setSetting } from "@/lib/database";
-import { discoverOfficialBoardForJob, runCollection, scoreAllJobs } from "@/lib/collector";
+import { clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
 import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
@@ -111,12 +111,14 @@ function persistProfile(formData: FormData): void {
 export async function saveOnboardingAction(formData: FormData): Promise<void> {
   persistProfile(formData);
   setSetting("collection_mode", text(formData, "collection_mode") === "automatic" ? "automatic" : "manual");
+  clearEligibilityOverrides();
   scoreAllJobs();
   redirect("/");
 }
 
 export async function saveProfileAction(formData: FormData): Promise<void> {
   persistProfile(formData);
+  clearEligibilityOverrides();
   scoreAllJobs();
   revalidatePath("/profile");
   revalidatePath("/jobs");
@@ -288,6 +290,19 @@ export async function updateJobStatusAction(formData: FormData): Promise<void> {
   revalidatePath("/queue");
 }
 
+export async function restoreJobEligibilityAction(formData: FormData): Promise<void> {
+  const id = Number(text(formData, "id"));
+  if (!Number.isFinite(id)) return;
+  const job = db.prepare("SELECT status FROM jobs WHERE id = ?").get(id) as { status: string } | undefined;
+  if (!job) return;
+  const hasResume = (db.prepare("SELECT COUNT(*) AS count FROM resume_versions WHERE job_id = ?").get(id) as { count: number }).count > 0;
+  const nextStatus = ["irrelevant", "dismissed"].includes(job.status) ? (hasResume ? "shortlisted" : "discovered") : job.status;
+  db.prepare("UPDATE jobs SET eligibility_status = 'eligible', eligibility_override = 1, status = ? WHERE id = ?").run(nextStatus, id);
+  syncRunEligibility();
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${id}`);
+}
+
 export async function approveJobAction(formData: FormData): Promise<void> {
   const id = Number(text(formData, "id"));
   if (!Number.isFinite(id)) return;
@@ -360,18 +375,19 @@ export async function saveAndApproveResumeAction(formData: FormData): Promise<vo
   redirect(row ? `/jobs/${row.job_id}?tab=cover-letter` : "/queue");
 }
 
-export async function approveCoverLetterAction(formData: FormData): Promise<void> {
+export async function approveCoverLetterAndQueueAction(formData: FormData): Promise<void> {
   const applicationId = Number(text(formData, "application_id"));
   const content = text(formData, "cover_letter_content")
     .replace(/\u2014/g, "-")
     .replace(/\u2013/g, "-");
   if (!Number.isFinite(applicationId) || content.length < 80 || content.length > 6_000) return;
   const application = db.prepare(`
-    SELECT applications.id, applications.job_id
+    SELECT applications.id, applications.job_id, jobs.title AS job_title, jobs.company AS job_company
     FROM applications
     JOIN resume_versions ON resume_versions.id = applications.resume_version_id
+    JOIN jobs ON jobs.id = applications.job_id
     WHERE applications.id = ? AND resume_versions.status = 'approved'
-  `).get(applicationId) as { id: number; job_id: number } | undefined;
+  `).get(applicationId) as { id: number; job_id: number; job_title: string; job_company: string } | undefined;
   if (!application) return;
   db.prepare(`
     INSERT INTO cover_letters (application_id, content, generation_method, evidence_json, status)
@@ -381,39 +397,18 @@ export async function approveCoverLetterAction(formData: FormData): Promise<void
       status = 'approved',
       updated_at = CURRENT_TIMESTAMP
   `).run(applicationId, content);
-  db.prepare(`
-    UPDATE applications
-    SET status = CASE WHEN status = 'ready_to_apply' THEN 'preparing' ELSE status END,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(applicationId);
-  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'preparing', 'Cover letter approved. Final application approval is pending.')").run(applicationId);
-  revalidatePath(`/jobs/${application.job_id}`);
-  revalidatePath("/queue");
-  revalidatePath("/applications");
-  redirect(`/jobs/${application.job_id}?tab=cover-letter`);
-}
-
-export async function approveToApplyAction(formData: FormData): Promise<void> {
-  const applicationId = Number(text(formData, "application_id"));
-  if (!Number.isFinite(applicationId)) return;
-  const application = db.prepare(`
-    SELECT applications.id, applications.job_id
-    FROM applications
-    JOIN resume_versions ON resume_versions.id = applications.resume_version_id
-    JOIN cover_letters ON cover_letters.application_id = applications.id
-    WHERE applications.id = ?
-      AND resume_versions.status = 'approved'
-      AND cover_letters.status = 'approved'
-  `).get(applicationId) as { id: number; job_id: number } | undefined;
-  if (!application) return;
   db.prepare("UPDATE applications SET status = 'ready_to_apply', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(applicationId);
-  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', 'Resume and cover letter approved for application.')").run(applicationId);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', 'Cover letter approved and application queued.')").run(applicationId);
   revalidatePath(`/jobs/${application.job_id}`);
   revalidatePath("/queue");
   revalidatePath("/applications");
   revalidatePath("/");
-  redirect(`/jobs/${application.job_id}?tab=cover-letter&ready=1`);
+  const params = new URLSearchParams({
+    queued: "1",
+    company: application.job_company,
+    title: application.job_title,
+  });
+  redirect(`/jobs?${params.toString()}`);
 }
 
 export async function createApplicationAction(formData: FormData): Promise<void> {
@@ -532,6 +527,7 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   setSetting("search_max_age_days", String(Math.max(1, nullableNumber(formData, "search_max_age_days") ?? 60)));
   setSetting("local_ai_enabled", formData.get("local_ai_enabled") ? "1" : "0");
   setSetting("ollama_model", text(formData, "ollama_model") || "llama3.2:3b");
+  clearEligibilityOverrides();
   scoreAllJobs();
   revalidatePath("/settings");
   revalidatePath("/");

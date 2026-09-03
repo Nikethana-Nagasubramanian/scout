@@ -15,6 +15,8 @@ if (process.env.NODE_ENV !== "production") globalDatabase.jobCopilotDb = db;
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.pragma("busy_timeout = 5000");
+db.pragma("synchronous = NORMAL");
+db.pragma("wal_checkpoint(TRUNCATE)");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS candidate_profile (
@@ -358,6 +360,7 @@ ensureColumn("jobs", "confidence_summary", "TEXT");
 ensureColumn("jobs", "duplicate_of_job_id", "INTEGER REFERENCES jobs(id) ON DELETE SET NULL");
 ensureColumn("jobs", "duplicate_reason", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("jobs", "eligibility_status", "TEXT NOT NULL DEFAULT 'needs_verification'");
+ensureColumn("jobs", "eligibility_override", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("collection_job_results", "classification", "TEXT NOT NULL DEFAULT 'needs_verification'");
 ensureColumn("job_sources", "cooldown_until", "TEXT");
 ensureColumn("job_sources", "last_attempt_at", "TEXT");

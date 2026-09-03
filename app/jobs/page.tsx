@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { approveJobAction, runWorkflowAction, updateJobStatusAction } from "@/app/actions";
+import { approveJobAction, restoreJobEligibilityAction, runWorkflowAction, updateJobStatusAction } from "@/app/actions";
 import { ManualJobModal } from "@/components/ManualJobModal";
-import { PageHeader, StatusPill } from "@/components/UI";
+import { QueueToast } from "@/components/QueueToast";
+import { Button, PageHeader, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db } from "@/lib/database";
@@ -14,8 +15,15 @@ import { formatDateTime, safeJson } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
-  searchParams: Promise<{ q?: string; status?: string; fit?: string; run?: string; source?: string }>;
+  searchParams: Promise<{ q?: string; fit?: string; run?: string; source?: string }>;
 }
+
+const FIT_SEGMENTS = [
+  { value: "all", label: "All roles" },
+  { value: "eligible", label: "Eligible" },
+  { value: "needs_verification", label: "Needs verification" },
+  { value: "removed", label: "Removed" },
+] as const;
 
 interface RunSummary {
   id: number;
@@ -53,6 +61,7 @@ interface FetchHistoryJob {
   duplicate_of_job_id: number | null;
   job_status: string;
   application_status: string | null;
+  application_applied_at: string | null;
   has_resume: number;
 }
 
@@ -134,6 +143,7 @@ interface JobListRow extends Job {
   latest_resume_id: number | null;
   latest_resume_status: string | null;
   application_status: string | null;
+  application_applied_at: string | null;
   run_outcome: string | null;
   run_eligible: number | null;
   run_classification: string | null;
@@ -166,8 +176,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       `).get(runId) as RunSummary | undefined
     : undefined;
   const listRun = query ? undefined : run;
-  const status = query ? "all" : parameters.status || (run ? "all" : "active");
-  const fit = query ? "all" : parameters.fit || (run ? "review" : "eligible");
+  const fit = query ? "all" : parameters.fit || "eligible";
   const source = parameters.source || "all";
   const fetchHistory = db.prepare(`
     SELECT collection_runs.id, collection_runs.slot, collection_runs.started_at,
@@ -229,6 +238,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       collection_job_results.classification, collection_job_results.outcome,
       collection_job_results.reasons_json,
       (SELECT applications.status FROM applications WHERE applications.job_id = jobs.id LIMIT 1) AS application_status,
+      (SELECT applications.applied_at FROM applications WHERE applications.job_id = jobs.id LIMIT 1) AS application_applied_at,
       EXISTS(SELECT 1 FROM resume_versions WHERE resume_versions.job_id = jobs.id) AS has_resume
     FROM collection_job_results
     INNER JOIN jobs ON jobs.id = collection_job_results.job_id
@@ -244,13 +254,6 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       jobs.score DESC,
       jobs.id DESC
   `);
-  const historySourceGroups = new Map(
-    fetchHistory.map((historyRun) => [
-      historyRun.id,
-      groupFetchHistoryJobs((historyJobsStatement.all(historyRun.id) as FetchHistoryJob[])
-        .filter((job) => isProductDesignRoleFamily(job.title, job.description))),
-    ]),
-  );
   const selectedRunLogs = run ? db.prepare(`
     SELECT workflow_logs.*, job_sources.name AS source_name
     FROM workflow_logs
@@ -259,7 +262,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
     ORDER BY workflow_logs.id
   `).all(run.id) as WorkflowLog[] : [];
   const resourceAudits = buildFetchResourceAudit(selectedRunLogs);
-  const selectedSourceGroups = run ? historySourceGroups.get(run.id) || [] : [];
+  const selectedRunRelevantJobs = run
+    ? (historyJobsStatement.all(run.id) as FetchHistoryJob[]).filter((job) => isProductDesignRoleFamily(job.title, job.description))
+    : [];
+  const selectedSourceGroups = groupFetchHistoryJobs(selectedRunRelevantJobs);
   const auditedResourceGroups = new Map<FetchResourceKey, FetchSourceGroup[]>();
   for (const group of selectedSourceGroups) {
     const key = fetchGroupResourceKey(group);
@@ -270,10 +276,11 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   const accountedResourceCount = resourceAudits.filter((resource) => resource.status !== "not_checked").length;
   const checkedResourceCount = resourceAudits.filter((resource) => ["complete", "partial", "failed"].includes(resource.status)).length;
   const coolingResourceCount = resourceAudits.filter((resource) => resource.status === "cooldown" || resource.skipped > 0).length;
-  const selectedRunMetrics = run
-    ? strictRunMetrics(historyJobsStatement.all(run.id) as FetchHistoryJob[])
-    : null;
+  const selectedRunMetrics = run ? strictRunMetrics(selectedRunRelevantJobs) : null;
   const selectedHistoryRun = run ? fetchHistory.find((historyRun) => historyRun.id === run.id) : undefined;
+  const duplicateCount = selectedRunMetrics
+    ? selectedRunMetrics.duplicates
+    : (db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE duplicate_of_job_id IS NOT NULL").get() as { count: number }).count;
   const clauses: string[] = [];
   const values: Array<string | number> = [];
 
@@ -281,22 +288,18 @@ export default async function JobsPage({ searchParams }: SearchProps) {
     clauses.push("(title LIKE ? OR company LIKE ? OR description LIKE ?)");
     values.push(`%${query}%`, `%${query}%`, `%${query}%`);
   }
-  if (status === "active") {
-    clauses.push("status IN ('discovered', 'reviewing')");
-  } else if (status !== "all") {
-    clauses.push("status = ?");
-    values.push(status);
+  if (fit === "duplicates") {
+    clauses.push("jobs.duplicate_of_job_id IS NOT NULL");
+  } else {
+    clauses.push("jobs.duplicate_of_job_id IS NULL");
+    // Once an application is queued (or further along) the job has graduated out of the
+    // Jobs decision queue and lives in Applications instead - "preparing" (resume/cover
+    // letter still in progress) is the only in-flight application status still shown here.
+    clauses.push("NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id AND applications.status != 'preparing')");
+    if (fit === "eligible") clauses.push("eligibility_status = 'eligible'");
+    else if (fit === "needs_verification") clauses.push("eligibility_status = 'needs_verification'");
+    else if (fit === "removed") clauses.push("(eligibility_status = 'filtered' OR jobs.status IN ('irrelevant', 'dismissed'))");
   }
-  if (fit === "review") {
-    clauses.push(run
-      ? "(run_result.outcome = 'new' AND run_result.classification IN ('eligible', 'needs_verification') AND jobs.duplicate_of_job_id IS NULL AND jobs.status NOT IN ('irrelevant', 'dismissed', 'archived') AND NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id) AND NOT EXISTS (SELECT 1 FROM resume_versions WHERE resume_versions.job_id = jobs.id))"
-      : "eligibility_status = 'needs_verification'");
-  }
-  if (fit === "eligible") clauses.push("eligibility_status = 'eligible'");
-  if (fit === "needs_verification") clauses.push("eligibility_status = 'needs_verification'");
-  if (fit === "strong") clauses.push("eligibility_status = 'eligible' AND score >= 80");
-  if (fit === "promising") clauses.push("eligibility_status = 'eligible' AND score BETWEEN 65 AND 79");
-  if (fit === "filtered") clauses.push("eligibility_status = 'filtered'");
   if (source === "greenhouse" || source === "ashby" || source === "manual" || source === "hiring_cafe") {
     clauses.push("source_type = ?");
     values.push(source);
@@ -337,7 +340,13 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         FROM applications
         WHERE applications.job_id = jobs.id
         LIMIT 1
-      ) AS application_status
+      ) AS application_status,
+      (
+        SELECT applications.applied_at
+        FROM applications
+        WHERE applications.job_id = jobs.id
+        LIMIT 1
+      ) AS application_applied_at
     FROM jobs
     ${runJoin}
     LEFT JOIN job_sources AS source_metadata ON source_metadata.id = jobs.source_id
@@ -352,9 +361,11 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   const jobs = savedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
   const resultFoundCount = selectedRunMetrics?.relevant ?? jobs.length;
   const resultSourceCount = accountedResourceCount || resourceAudits.length;
+  const segmentSummaryLabel = fit === "removed" ? "removed" : fit === "duplicates" ? "duplicate" : fit === "eligible" ? "eligible" : fit === "needs_verification" ? "needing verification" : "worth your time";
 
   return (
     <div className="page jobs-page">
+      <QueueToast />
       <PageHeader title="Jobs" description="Fetch, review, and decide which opportunities deserve your time.">
         <ManualJobModal />
         <form action={runWorkflowAction}>
@@ -363,7 +374,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         </form>
       </PageHeader>
       <section className="jobs-results-summary" aria-label="Job collection summary">
-        <h2>Scout found {jobs.length} {jobs.length === 1 ? "role" : "roles"} worth your time</h2>
+        <h2>Scout found {jobs.length} {jobs.length === 1 ? "role" : "roles"} {segmentSummaryLabel}</h2>
         <p>Scout found {resultFoundCount} {resultFoundCount === 1 ? "role" : "roles"} across {resultSourceCount} {resultSourceCount === 1 ? "source" : "sources"}</p>
       </section>
       <section className="card fetch-audit-card" aria-label="Recent fetches">
@@ -383,7 +394,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
               {fetchHistory.map((historyRun) => (
                 <Link
                   className={run?.id === historyRun.id ? "active" : ""}
-                  href={`/jobs?run=${historyRun.id}&fit=review&status=all`}
+                  href={`/jobs?run=${historyRun.id}&fit=${fit === "duplicates" ? "all" : fit}`}
                   key={historyRun.id}
                 >
                   <strong>Fetch {historyRun.id}</strong>
@@ -452,11 +463,13 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                                       const reasons = safeJson<string[]>(job.reasons_json, []);
                                       const historyStatus = job.duplicate_of_job_id !== null
                                         ? "duplicate"
-                                        : job.application_status
-                                          ? job.application_status === "rejected" ? "previously_rejected" : "previously_applied"
-                                          : ["irrelevant", "dismissed"].includes(job.job_status)
-                                            ? "previously_rejected"
-                                            : job.outcome === "refreshed" ? "previously_fetched" : job.outcome;
+                                        : job.application_applied_at
+                                          ? (job.application_status === "rejected" ? "previously_rejected" : "previously_applied")
+                                          : job.application_status
+                                            ? "ready_to_apply"
+                                            : ["irrelevant", "dismissed"].includes(job.job_status)
+                                              ? "previously_rejected"
+                                              : job.outcome === "refreshed" ? "previously_fetched" : job.outcome;
                                       return (
                                         <div className="fetch-history-job fetch-history-job-detailed" key={job.id}>
                                           <span><strong>{job.title}</strong><small>{job.company}</small>{reasons.length ? <small className="fetch-history-reasons">{reasons.join(" ")}</small> : <small className="success-text">No eligibility conflicts found.</small>}</span>
@@ -475,9 +488,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                   })}
                 </div>
                 <div className="inline-actions fetch-audit-links">
-                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=all&status=all`}>All saved results</Link>
-                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=review&status=all`}>New and needs review</Link>
-                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=filtered&status=all`}>Filtered</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=all`}>All roles</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=eligible`}>Eligible</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=needs_verification`}>Needs verification</Link>
+                  <Link className="text-link" href={`/jobs?run=${run.id}&fit=removed`}>Removed</Link>
                   <Link className="text-link" href={`/diagnostics?run=${run.id}`}>Technical details</Link>
                 </div>
                 </div>
@@ -487,20 +501,23 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         ) : <p className="muted fetch-audit-empty">Click Fetch new jobs to create the first recorded search.</p>}
       </section>
 
-      <form className="jobs-filter-bar" method="get">
+      <form className="jobs-filter-bar" id="jobs-toolbar" action="#jobs-toolbar" method="get">
         {listRun ? <input type="hidden" name="run" value={listRun.id} /> : null}
         <label className="jobs-search-field">
           <span className="jobs-search-icon" aria-hidden="true" />
           <input type="search" name="q" defaultValue={query} placeholder="Search all saved jobs by title, company, or description" aria-label="Search all saved jobs" />
         </label>
-        <select name="status" defaultValue={status} aria-label="Status filter"><option value="active">Active only</option><option value="all">All statuses</option><option value="discovered">Discovered</option><option value="reviewing">Reviewing</option><option value="shortlisted">Shortlisted</option><option value="irrelevant">Irrelevant</option><option value="dismissed">Dismissed</option></select>
-        <div className="jobs-fit-segments" role="group" aria-label="Profile match filter">
-          <button className={fit === "review" ? "active" : ""} name="fit" value="review" type="submit">Needs review</button>
-          <button className={fit === "eligible" ? "active" : ""} name="fit" value="eligible" type="submit">Eligible</button>
-          <span aria-hidden="true" />
-          <button className={fit === "filtered" ? "active" : ""} name="fit" value="filtered" type="submit">Filtered</button>
+        <div className="jobs-fit-segments" role="group" aria-label="Role status filter">
+          {FIT_SEGMENTS.map((segment) => (
+            <button className={fit === segment.value ? "active" : ""} name="fit" value={segment.value} type="submit" key={segment.value}>{segment.label}</button>
+          ))}
         </div>
       </form>
+      {duplicateCount > 0 ? (
+        <p className="muted jobs-duplicates-link">
+          <Link className="text-link" href={listRun ? `/jobs?run=${listRun.id}&fit=duplicates` : "/jobs?fit=duplicates"}>Show {duplicateCount} {duplicateCount === 1 ? "duplicate" : "duplicates"}</Link>
+        </p>
+      ) : null}
 
       <section className="jobs-results-list">
         {jobs.length ? <div className="jobs-result-rows">
@@ -525,11 +542,13 @@ export default async function JobsPage({ searchParams }: SearchProps) {
               job.run_reasons_json,
               [...breakdown.hardFilterReasons, ...breakdown.verificationReasons],
             );
-            const previouslyHandled = Boolean(
-              job.duplicate_of_job_id !== null
-              || job.application_status
-              || ["irrelevant", "dismissed", "archived"].includes(job.status),
-            );
+            const isApplied = Boolean(job.application_applied_at);
+            const isDuplicate = job.duplicate_of_job_id !== null;
+            const isManuallyRejected = ["irrelevant", "dismissed"].includes(job.status);
+            const isRemoved = !isApplied && !isDuplicate && (classification === "filtered" || isManuallyRejected);
+            const removalReason = isManuallyRejected
+              ? "You rejected this role."
+              : reasons[0] ? `Rejected by Scout: ${reasons[0]}` : "Rejected by Scout.";
             return <article className="jobs-result-row" key={job.id}>
               <div className="jobs-result-primary">
                 <div className="jobs-result-identity">
@@ -539,43 +558,62 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                 <div className="jobs-result-match"><strong>{job.score}%</strong><span>Profile match</span></div>
               </div>
               <div className="jobs-result-reason">
-                <StatusPill status={classification} />
-                <p>{reasons[0] || "No eligibility conflicts found."}</p>
+                {isApplied ? (
+                  <StatusPill status="applied" />
+                ) : isDuplicate ? (
+                  <>
+                    <StatusPill status="duplicate" />
+                    {job.duplicate_of_job_id ? <Link className="text-link" href={`/jobs/${job.duplicate_of_job_id}`}>View original</Link> : null}
+                  </>
+                ) : isRemoved ? (
+                  <>
+                    <StatusPill status={isManuallyRejected ? "manually_removed" : "removed"} />
+                    <p>{removalReason}</p>
+                  </>
+                ) : (
+                  <>
+                    <StatusPill status={classification} />
+                    <p>{reasons[0] || "No eligibility conflicts found."}</p>
+                  </>
+                )}
               </div>
               <div className="job-decision-actions">
-                  {job.application_status ? (
-                    <Link className="button secondary small" href="/applications">View application</Link>
-                  ) : previouslyHandled ? (
-                    <span className="muted">No action needed</span>
+                  {isApplied ? (
+                    <Button href="/applications" variant="secondary" size="small">View application</Button>
+                  ) : isDuplicate ? (
+                    <span className="muted">Duplicate posting</span>
+                  ) : isRemoved ? (
+                    <form action={restoreJobEligibilityAction}>
+                      <input type="hidden" name="id" value={job.id} />
+                      <Button variant="secondary" size="small" type="submit" className="restore-button">Restore to eligible</Button>
+                    </form>
                   ) : job.latest_resume_id && job.latest_resume_status !== "rejected" ? (
-                    <Link className="button secondary small" href={`/jobs/${job.id}?tab=resume`}>
+                    <Button href={`/jobs/${job.id}?tab=resume`} variant="secondary" size="small">
                       {job.latest_resume_status === "approved" ? "Continue to application" : "Continue preparation"}
-                    </Link>
+                    </Button>
                   ) : (
                     <form action={approveJobAction}>
                       <input type="hidden" name="id" value={job.id} />
                       <ResumeSubmitButton className="button secondary small">
-                        {job.latest_resume_status === "rejected" ? "Prepare again" : "Prepare application"}
+                        {job.latest_resume_status === "rejected" ? "Prepare new resume" : "Prepare application"}
                       </ResumeSubmitButton>
                     </form>
                   )}
-                  {!previouslyHandled ? (
+                  {!isApplied && !isDuplicate && !isRemoved ? (
                     <form action={updateJobStatusAction}>
                       <input type="hidden" name="id" value={job.id} />
                       <input type="hidden" name="status" value="irrelevant" />
-                      <button className="button ghost small danger-text" type="submit">Reject</button>
+                      <Button variant="ghost" size="small" className="danger-text" type="submit">Reject</Button>
                     </form>
                   ) : null}
               </div>
             </article>;
           })}
-        </div> : listRun && fit === "review" ? (
+        </div> : (
           <div className="empty-state">
-            <h3>No new decisions needed</h3>
-            <p>Every relevant role in this fetch was previously fetched, rejected, applied to, or already has resume work. Use All saved results to inspect them.</p>
+            <h3>No jobs match these filters</h3>
+            <p>{fit === "removed" ? "Nothing has been removed here." : fit === "duplicates" ? "No duplicates found." : "Clear a filter or collect more company sources."}</p>
           </div>
-        ) : (
-          <div className="empty-state"><h3>No jobs match these filters</h3><p>Clear a filter or collect more company sources.</p></div>
         )}
       </section>
     </div>
