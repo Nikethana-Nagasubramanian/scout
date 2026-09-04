@@ -526,7 +526,7 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   setSetting("search_experience_max", String(maximumExperience));
   setSetting("search_max_age_days", String(Math.max(1, nullableNumber(formData, "search_max_age_days") ?? 60)));
   setSetting("local_ai_enabled", formData.get("local_ai_enabled") ? "1" : "0");
-  setSetting("ollama_model", text(formData, "ollama_model") || "llama3.2:3b");
+  setSetting("ollama_model", text(formData, "ollama_model") || "gemma3:4b");
   clearEligibilityOverrides();
   scoreAllJobs();
   revalidatePath("/settings");

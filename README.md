@@ -57,9 +57,17 @@ Prepare a job from the Jobs page to generate a tailored resume draft. Drafts lan
 Ollama is optional. Enable it on the Settings page to prioritize existing resume evidence without sending the resume off the Mac.
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull gemma3:4b
 ollama serve
 ```
+
+Ollama must actually be running for any of this to happen. If `ollama serve` is not up, Scout
+silently falls back to a structured template, so check the line under a cover letter draft: it
+names the model when local AI wrote it, and says so plainly when it did not.
+
+Ollama runs entirely on your Mac and has no internet access, so it never researches a company
+on its own. Everything it knows comes from the job posting Scout fetched and your saved
+resume evidence.
 
 Scout works without Ollama.
 

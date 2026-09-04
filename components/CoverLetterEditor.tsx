@@ -164,7 +164,13 @@ export function CoverLetterEditor({
         {content ? <button className="button ghost cover-letter-utility" onClick={copy} type="button">Copy</button> : null}
         {savedContent ? <a className="button ghost cover-letter-utility" href={`/api/applications/${applicationId}/cover-letter/pdf`}>PDF</a> : null}
       </div>
-      {method && content ? <small className="cover-letter-method">{method} · {wordCount} words · {dirty ? "Unsaved edits" : status.replaceAll("_", " ")}</small> : null}
+      {method && content ? (
+        <small className={`cover-letter-method${method.startsWith("Structured") ? " fallback" : ""}`}>
+          {method.startsWith("Structured")
+            ? `Not written by local AI. ${method}. Check Ollama is running before you rely on this draft.`
+            : method} · {wordCount} words · {dirty ? "Unsaved edits" : status.replaceAll("_", " ")}
+        </small>
+      ) : null}
       {notice ? <p className="cover-letter-notice" aria-live="polite">{notice}</p> : null}
     </form>
   );

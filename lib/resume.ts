@@ -191,7 +191,7 @@ export async function createResumeVersion(jobId: number): Promise<number> {
   let method = "Deterministic ATS tailoring";
   if (getSetting("local_ai_enabled", "0") === "1") {
     try {
-      content = await prioritizeResumeWithOllama(content, job, getSetting("ollama_model", "llama3.2:3b"));
+      content = await prioritizeResumeWithOllama(content, job, getSetting("ollama_model", "gemma3:4b"));
       method = "Local AI evidence prioritization";
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");

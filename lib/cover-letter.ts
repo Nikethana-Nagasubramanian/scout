@@ -57,11 +57,27 @@ function jobSentences(description: string): string[] {
 
 function missionEvidence(job: Job): string {
   const sentences = jobSentences(job.description);
-  return sentences.find((sentence) => (
-    /\b(?:mission|purpose|we build|we help|we enable|we empower|we make|our goal|committed to|transform|improve|simplify)\b/i.test(sentence)
-    && !/\b(?:qualification|requirement|years? of experience|equal opportunity|benefits)\b/i.test(sentence)
-  )) || `${job.company} is hiring a ${job.title} to contribute to the product work described in the role.`;
+  const isBoilerplate = (sentence: string) => /\b(?:qualification|requirement|years? of experience|equal opportunity|benefits|salary|compensation)\b/i.test(sentence);
+  // A responsibility sentence is about the reader, not the company. It reads badly when
+  // quoted back as the reason for applying, so it is never treated as a mission.
+  const isResponsibility = (sentence: string) => /^\s*(?:you(?:'ll| will)?\b|we(?:'re| are) looking|in this role|responsibilities)/i.test(sentence);
+  const strongMission = /\b(?:our mission|we are building|we're building|we build|we help|we enable|we empower|we make|our goal|our purpose)\b/i;
+  const companyMention = new RegExp(`\\b${job.company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b\\s+(?:is|was|builds|helps|makes)`, "i");
+  // Postings often run a section heading into the first sentence, as in "ABOUT SUNSET At its
+  // core...". The heading is not part of the sentence and reads as noise when quoted.
+  const stripHeading = (sentence: string) => sentence
+    .replace(/^(?:[A-Z][A-Z0-9&.'-]*\s+){1,6}(?=[A-Z][a-z])/, "")
+    .trim();
+  const usable = sentences
+    .filter((sentence) => !isBoilerplate(sentence) && !isResponsibility(sentence))
+    .map(stripHeading)
+    .filter(Boolean);
+  return usable.find((sentence) => strongMission.test(sentence))
+    || usable.find((sentence) => companyMention.test(sentence))
+    || `${job.company} is hiring a ${job.title} to contribute to the product work described in the role.`;
 }
+
+const MAX_LOCAL_AI_ATTEMPTS = 3;
 
 const roleSignalPatterns: Array<[RegExp, string]> = [
   [/\buser research\b/i, "user research"],
@@ -80,10 +96,18 @@ const roleSignalPatterns: Array<[RegExp, string]> = [
 ];
 
 function roleSignals(job: Job): string[] {
-  return roleSignalPatterns
-    .filter(([pattern]) => pattern.test(job.description))
-    .map(([, label]) => label)
-    .slice(0, 4);
+  // Rank by how often a posting actually returns to a theme. A single incidental mention of
+  // "financial" should not become a claim that the role is about financial products, and
+  // taking the first matches in list order made that mistake routinely.
+  const scored = roleSignalPatterns
+    .map(([pattern, label]) => {
+      const matches = job.description.match(new RegExp(pattern.source, "gi"));
+      return { label, count: matches ? matches.length : 0 };
+    })
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const repeated = scored.filter((entry) => entry.count >= 2);
+  return (repeated.length >= 2 ? repeated : scored).slice(0, 4).map((entry) => entry.label);
 }
 
 function resumeEvidence(content: ResumeContent): string[] {
@@ -120,7 +144,7 @@ export function deterministicCoverLetter(job: Job, content: ResumeContent, candi
     ? `I am interested in the ${job.title} role because ${shorten(candidateNote, 260)}`
     : mission.startsWith(`${job.company} is hiring`)
       ? `I am interested in the ${job.title} role because its focus on ${roleFocus} is close to the work I have chosen throughout my career.`
-      : `I am interested in the ${job.title} role because the work described in the posting feels specific and consequential. What stood out to me was ${shorten(mission, 220).replace(/^[A-Z][^ ]*\s+is\s+/i, "the focus on ")}`;
+      : `I am interested in the ${job.title} role at ${job.company}. ${shorten(mission, 220)}`;
   const contentText = [
     `Dear ${job.company} team,`,
     opening,
@@ -259,7 +283,33 @@ export async function generateCoverLetterDraft(
     }),
   ].join("\n");
 
-  try {
+  const attempts: string[] = [];
+  for (let attempt = 1; attempt <= MAX_LOCAL_AI_ATTEMPTS; attempt += 1) {
+    try {
+      return await requestLocalDraft(prompt, model, evidence, job, attempt);
+    } catch (error) {
+      const reason = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+        ? "the selected model did not finish within 120 seconds"
+        : error instanceof Error
+          ? error.message
+          : "Ollama was unavailable";
+      attempts.push(reason);
+      // A length or trope miss is worth one more sample from the same model. A connection
+      // failure will not fix itself, so stop asking.
+      if (/fetch failed|ECONNREFUSED|Ollama returned/i.test(reason)) break;
+    }
+  }
+  return { ...fallback, method: `Structured fallback because local AI failed: ${attempts[attempts.length - 1]}` };
+}
+
+async function requestLocalDraft(
+  prompt: string,
+  model: string,
+  evidence: CoverLetterDraft["evidence"],
+  job: Job,
+  attempt: number,
+): Promise<CoverLetterDraft> {
+  {
     const response = await fetch("http://127.0.0.1:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -273,7 +323,8 @@ export async function generateCoverLetterDraft(
           required: ["content"],
         },
         keep_alive: "10m",
-        options: { temperature: 0.35 },
+        // A retry samples a little more freely, so a second attempt is not a rerun of the first.
+        options: { temperature: attempt === 1 ? 0.35 : 0.55 },
       }),
       signal: AbortSignal.timeout(120_000),
     });
@@ -281,14 +332,11 @@ export async function generateCoverLetterDraft(
     const payload = await response.json() as OllamaResponse;
     const generated = parseContent(payload.response || "{}");
     validateGeneratedLetter(generated, job, evidence.resumeEvidence);
-    return { content: generated, method: `Local AI draft using ${model}`, evidence };
-  } catch (error) {
-    const reason = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-      ? "the selected model did not finish within 120 seconds"
-      : error instanceof Error
-        ? error.message
-        : "Ollama was unavailable";
-    return { ...fallback, method: `Structured fallback because local AI failed: ${reason}` };
+    return {
+      content: generated,
+      method: `Local AI draft using ${model}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
+      evidence,
+    };
   }
 }
 

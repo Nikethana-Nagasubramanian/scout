@@ -949,6 +949,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
 .cover-letter-trust-note { flex: 1; color: #a5a4a5; font-size: 12px; line-height: 16px; }
 .cover-letter-utility { min-width: 52px; padding-inline: 9px; }
 .cover-letter-method { color: #8c898a; font-size: 10px; }
+.cover-letter-method.fallback { display: block; margin-top: 6px; padding: 7px 9px; border: 1px solid #e6c9a0; border-radius: 7px; background: #fff5e4; color: #744c0b; }
 .cover-letter-notice { margin: 0; color: var(--accent); font-size: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .application-details { border-top: 1px solid var(--line); padding-top: 11px; }

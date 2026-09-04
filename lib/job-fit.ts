@@ -47,8 +47,6 @@ const foreignLocationTerms = [
   "united kingdom", "uk", "vietnam",
 ];
 
-const productDesignerPattern = /\bproduct designer\b/i;
-const uiUxDesignerPattern = /\b(?:ui\s*\/?\s*ux|ux\s*\/?\s*ui) designer\b/i;
 const designEngineerPattern = /\bdesign engineer\b/i;
 const hardwareDesignTitlePattern = /\b(?:mechanical|electrical|electronics|hardware|civil|structural|manufacturing|aerospace|automotive|semiconductor|silicon|pcb|hvac)\b/i;
 const hardwareDesignDescriptionPattern = /\b(?:mechanical (?:architecture|design|engineering)|electrical engineering|circuit design|printed circuit|pcb|solidworks|autocad|catia|creo|pro\/?e|siemens nx|3d cad|cad drawings?|gd&t|geometric dimensioning|finite element|fea|manufacturing process|design for manufacturability|dfm|design for assembly|dfa|injection mold(?:ing)?|cnc|tooling|tolerance analysis|thermodynamics|mechanisms?|enclosure design|industrial design|consumer electronics|mass production|semiconductor|silicon validation|hvac)\b/i;
@@ -74,13 +72,13 @@ export function broadDiscoverySearchTitles(profile: CandidateProfile): string[] 
  * Titles from a different design discipline. A description full of product words should not
  * rescue these, because the craft itself is not the one being searched for.
  */
-const otherDesignDisciplinePattern = /\b(?:graphic|brand|marketing|motion|3d|game|sound|audio|instructional|packaging|interior|fashion|textile|jewell?ery|landscape|architectural|industrial)\b/i;
+const otherDesignDisciplinePattern = /\b(?:graphic|brand|marketing|motion|3d|game|sound|audio|instructional|packaging|interior|fashion|textile|jewell?ery|landscape|architectural|industrial|construction|data cent(?:er|re)|facilities|infrastructure planning)\b/i;
 
 /**
  * Titles worth reading the description for. Product design work is advertised under many
  * names, so a title only has to look design adjacent to earn a closer look.
  */
-const designAdjacentTitlePattern = /\b(?:design|designer|ux|ui|prototyper|creative technologist|product engineer|product technologist)\b/i;
+const designAdjacentTitlePattern = /\b(?:ux|ui|prototyper|technologist|product engineer)\b/i;
 
 // Distinct signals rather than one keyword list, so a single stray mention of React in an
 // unrelated posting cannot promote it on its own.
@@ -100,23 +98,37 @@ export function digitalDesignSignalCount(description: string): number {
   return digitalDesignSignalPatterns.filter((pattern) => pattern.test(description)).length;
 }
 
+/** Any title that names a design craft, whatever the flavour. */
+const designTitlePattern = /\bdesign(?:er|ers)?\b/i;
+
 /**
- * Three-way role family check. "possible" means the title is not one Scout searches for, but
- * the posting reads like product design work, so a person should decide instead of a regex.
+ * Three-way role family check.
+ *
+ * Any software design title passes outright: Product, UX, UI, interaction, experience, web,
+ * mobile, visual, and design systems work are all the same craft in practice. Only two cases
+ * need more thought. "Design engineer" is genuinely ambiguous between hardware and software,
+ * so its description decides. A title with no design word at all can still be kept for review
+ * when the posting itself reads like product design work.
  */
 export function classifyRoleFamily(title: string, description = ""): RoleFamilyMatch {
-  if (isProductDesignRoleFamily(title, description)) return "match";
   if (hardwareDesignTitlePattern.test(title) || otherDesignDisciplinePattern.test(title)) return "no";
+
+  // "Design engineer" spans hardware and software, so it must show digital evidence. A vague
+  // posting stays out rather than being waved through on the title.
+  if (designEngineerPattern.test(title)) {
+    if (hardwareDesignDescriptionPattern.test(description)) return "no";
+    return digitalDesignDescriptionPattern.test(description) ? "match" : "no";
+  }
+
+  if (designTitlePattern.test(title)) return "match";
+
   if (!designAdjacentTitlePattern.test(title)) return "no";
   if (!description.trim() || hardwareDesignDescriptionPattern.test(description)) return "no";
   return digitalDesignSignalCount(description) >= 2 ? "possible" : "no";
 }
 
 export function isProductDesignRoleFamily(title: string, description = ""): boolean {
-  if (productDesignerPattern.test(title) || uiUxDesignerPattern.test(title)) return true;
-  if (!designEngineerPattern.test(title) || hardwareDesignTitlePattern.test(title)) return false;
-  if (!description.trim()) return false;
-  return digitalDesignDescriptionPattern.test(description) && !hardwareDesignDescriptionPattern.test(description);
+  return classifyRoleFamily(title, description) === "match";
 }
 
 const excludedLeadershipPattern = /\b(?:staff|principal|lead|manager|director|head|vice president|vp)\b/i;

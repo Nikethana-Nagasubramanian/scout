@@ -444,7 +444,7 @@ const defaultSettings: Record<string, string> = {
   search_experience_max: "5",
   search_max_age_days: "60",
   local_ai_enabled: "0",
-  ollama_model: "llama3.2:3b",
+  ollama_model: "gemma3:4b",
   hunter_credit_budget: "40",
   hunter_credits_used_by_scout: "0",
 };

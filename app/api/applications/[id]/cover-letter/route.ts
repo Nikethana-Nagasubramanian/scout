@@ -53,7 +53,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const draft = await generateCoverLetterDraft(
     enrichedJob,
     resolved.content,
-    getSetting("ollama_model", "llama3.2:3b"),
+    getSetting("ollama_model", "gemma3:4b"),
     getSetting("local_ai_enabled", "0") === "1",
     candidateNote,
   );

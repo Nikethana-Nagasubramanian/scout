@@ -55,7 +55,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         content,
         row,
         plan.keyword,
-        getSetting("ollama_model", "llama3.2:3b"),
+        getSetting("ollama_model", "gemma3:4b"),
         plan.target,
         plan.evidence,
       );

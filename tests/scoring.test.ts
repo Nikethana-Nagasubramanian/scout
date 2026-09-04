@@ -193,7 +193,7 @@ describe("scoreJob", () => {
     expect(result.compensation).toBe(0);
   });
 
-  it("accepts only the strict target design titles", () => {
+  it("accepts software design titles", () => {
     const strictProfile = {
       ...profile,
       target_seniority: "mid",
@@ -209,13 +209,13 @@ describe("scoreJob", () => {
       }), strictProfile, preferences);
       expect(result.eligibilityStatus, title).toBe("eligible");
     }
-    for (const title of ["UX Designer", "Interaction Designer"]) {
+    for (const title of ["UX Designer", "Interaction Designer", "Web Designer"]) {
       const result = scoreJob(job({
         title,
         location: "Remote, United States",
         description: "Design digital product experiences using Figma. Required qualifications include 3 to 5 years of relevant experience.",
       }), strictProfile, preferences);
-      expect(result.eligibilityStatus, title).toBe("filtered");
+      expect(result.eligibilityStatus, title).toBe("eligible");
     }
   });
 
@@ -318,14 +318,14 @@ describe("scoreJob", () => {
     }
   });
 
-  it("filters graphic, pure web, and leadership design roles", () => {
+  it("filters other design disciplines and leadership roles", () => {
     const strictProfile = {
       ...profile,
       target_seniority: "mid",
       preferred_locations: JSON.stringify(["United States"]),
     };
     const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 };
-    for (const title of ["Graphic Designer", "Web Designer", "Lead Product Designer", "Design Manager"]) {
+    for (const title of ["Graphic Designer", "Motion Designer", "Lead Product Designer", "Design Manager"]) {
       const result = scoreJob(job({
         title,
         location: "Remote, United States",
@@ -361,10 +361,23 @@ describe("role family classification", () => {
     expect(classifyRoleFamily("Product Design Engineer", "Build React interfaces using Figma and TypeScript.")).toBe("match");
   });
 
-  it("keeps an unusual design title for review instead of dropping it", () => {
-    expect(classifyRoleFamily("Interaction Designer", digitalDescription)).toBe("possible");
-    expect(classifyRoleFamily("Experience Designer", digitalDescription)).toBe("possible");
+  it("passes any software design title outright", () => {
+    for (const title of [
+      "UX Designer",
+      "UI Designer",
+      "Interaction Designer",
+      "Experience Designer",
+      "Web Designer",
+      "Visual Designer",
+      "Mobile UI Designer",
+      "Design Technologist",
+      "Figma Design Specialist",
+    ]) expect(classifyRoleFamily(title, digitalDescription), title).toBe("match");
+  });
+
+  it("keeps a title with no design word for review when the posting reads like design work", () => {
     expect(classifyRoleFamily("Product Technologist", digitalDescription)).toBe("possible");
+    expect(classifyRoleFamily("Creative Technologist", digitalDescription)).toBe("possible");
   });
 
   it("still rejects other design disciplines whatever the description says", () => {
@@ -378,8 +391,8 @@ describe("role family classification", () => {
     expect(classifyRoleFamily("Design Engineer", "Own mechanical architecture and SolidWorks CAD drawings.")).toBe("no");
   });
 
-  it("does not rescue a role on one stray keyword", () => {
-    expect(classifyRoleFamily("Experience Designer", "Design retail store experiences for shoppers using React of the brand.")).toBe("no");
+  it("does not rescue a non-design title on one stray keyword", () => {
+    expect(classifyRoleFamily("Product Technologist", "We use React.")).toBe("no");
     expect(digitalDesignSignalCount("We use React.")).toBe(1);
   });
 
@@ -406,7 +419,7 @@ describe("role family classification", () => {
   it("routes a possible match to verification rather than eligible", () => {
     const assessment = assessJobEligibility(
       {
-        title: "Interaction Designer",
+        title: "Product Technologist",
         location: "New York, NY",
         description: digitalDescription,
         workplaceType: "hybrid",

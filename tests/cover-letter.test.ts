@@ -113,3 +113,36 @@ describe("cover letter generation", () => {
     expect(source).toContain("Test Candidate");
   });
 });
+
+describe("cover letter evidence quality", () => {
+  function jobWith(description: string, company = "Sunset"): Job {
+    return { ...job, company, description };
+  }
+
+  it("quotes a company sentence rather than a responsibility line", () => {
+    const draft = deterministicCoverLetter(
+      jobWith("You will improve the path from setup instructions and permissions through recovery. At its core, Sunset was founded to help founders."),
+      resume,
+    );
+    expect(draft.evidence.mission).toContain("founded to help founders");
+    expect(draft.evidence.mission).not.toContain("You will");
+    expect(draft.content).not.toContain("was You will");
+  });
+
+  it("drops a section heading that runs into the sentence", () => {
+    const draft = deterministicCoverLetter(
+      jobWith("ABOUT SUNSET At its core, Sunset was founded to help founders."),
+      resume,
+    );
+    expect(draft.evidence.mission.startsWith("At its core")).toBe(true);
+  });
+
+  it("does not claim a theme the posting mentions only once in passing", () => {
+    const draft = deterministicCoverLetter(
+      jobWith("We build AI products. Prototyping AI products quickly matters. Our AI products team prototypes daily. Financial details are discussed at offer stage."),
+      resume,
+    );
+    expect(draft.evidence.roleSignals).toContain("AI products");
+    expect(draft.evidence.roleSignals).not.toContain("financial products");
+  });
+});

@@ -36,7 +36,7 @@ async function installedOllamaModels(): Promise<string[]> {
 export default async function SettingsPage() {
   const mode = getSetting("collection_mode", "manual");
   const schedulerInstalled = existsSync(join(homedir(), "Library", "LaunchAgents", "local.scout.job-collector.plist"));
-  const selectedModel = getSetting("ollama_model", "llama3.2:3b");
+  const selectedModel = getSetting("ollama_model", "gemma3:4b");
   const installedModels = await installedOllamaModels();
   const modelOptions = installedModels.includes(selectedModel) ? installedModels : [selectedModel, ...installedModels];
 

@@ -230,7 +230,7 @@ describe("source-specific role queries", () => {
     expect(broadDiscoverySearchTitles(profile)).not.toContain("Design Engineer");
   });
 
-  it("accepts only strict target titles and requires digital evidence for Design Engineer", () => {
+  it("accepts any software design title and requires digital evidence for Design Engineer", () => {
     expect(isProductDesignRoleFamily("Senior Product Designer")).toBe(true);
     expect(isProductDesignRoleFamily("UX/UI Designer")).toBe(true);
     expect(isProductDesignRoleFamily("Product Design Engineer", "Build React interfaces using Figma and TypeScript.")).toBe(true);
@@ -238,8 +238,10 @@ describe("source-specific role queries", () => {
     expect(isProductDesignRoleFamily("Product Design Engineer", "Own mechanical architecture for prototype systems.")).toBe(false);
     expect(isProductDesignRoleFamily("Product Design Engineer", "Prototype spatial computing products with cross-functional teams.")).toBe(false);
     expect(isProductDesignRoleFamily("Design Engineer")).toBe(false);
-    expect(isProductDesignRoleFamily("UX Designer")).toBe(false);
-    expect(isProductDesignRoleFamily("Interaction Designer")).toBe(false);
+    expect(isProductDesignRoleFamily("UX Designer")).toBe(true);
+    expect(isProductDesignRoleFamily("Interaction Designer")).toBe(true);
+    expect(isProductDesignRoleFamily("Web Designer")).toBe(true);
+    expect(isProductDesignRoleFamily("Design Technologist")).toBe(true);
     expect(isProductDesignRoleFamily("Software Engineer")).toBe(false);
     expect(isProductDesignRoleFamily("Graphic Designer")).toBe(false);
   });
