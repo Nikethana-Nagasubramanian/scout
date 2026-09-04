@@ -1,10 +1,6 @@
 import PDFDocument from "pdfkit";
-import { OLLAMA_KEEP_ALIVE } from "@/lib/local-ai";
+import { describeAiFailure, providerLabel, runStructuredPrompt } from "@/lib/llm";
 import type { Job, ResumeContent } from "@/lib/types";
-
-interface OllamaResponse {
-  response?: string;
-}
 
 interface CoverLetterResponse {
   content?: unknown;
@@ -289,18 +285,14 @@ export async function generateCoverLetterDraft(
     try {
       return await requestLocalDraft(prompt, model, evidence, job, attempt);
     } catch (error) {
-      const reason = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-        ? "the selected model did not finish within 120 seconds"
-        : error instanceof Error
-          ? error.message
-          : "Ollama was unavailable";
+      const reason = describeAiFailure(error);
       attempts.push(reason);
       // A length or trope miss is worth one more sample from the same model. A connection
-      // failure will not fix itself, so stop asking.
-      if (/fetch failed|ECONNREFUSED|Ollama returned/i.test(reason)) break;
+      // failure or a rejected key will not fix itself, so stop asking.
+      if (/fetch failed|ECONNREFUSED|Ollama returned|API key|rate limit|not set/i.test(reason)) break;
     }
   }
-  return { ...fallback, method: `Structured fallback because local AI failed: ${attempts[attempts.length - 1]}` };
+  return { ...fallback, method: `Structured fallback because ${attempts[attempts.length - 1]}` };
 }
 
 async function requestLocalDraft(
@@ -310,35 +302,25 @@ async function requestLocalDraft(
   job: Job,
   attempt: number,
 ): Promise<CoverLetterDraft> {
-  {
-    const response = await fetch("http://127.0.0.1:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-        format: {
-          type: "object",
-          properties: { content: { type: "string" } },
-          required: ["content"],
-        },
-        keep_alive: OLLAMA_KEEP_ALIVE,
-        // A retry samples a little more freely, so a second attempt is not a rerun of the first.
-        options: { temperature: attempt === 1 ? 0.35 : 0.55 },
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
-    const payload = await response.json() as OllamaResponse;
-    const generated = parseContent(payload.response || "{}");
-    validateGeneratedLetter(generated, job, evidence.resumeEvidence);
-    return {
-      content: generated,
-      method: `Local AI draft using ${model}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
-      evidence,
-    };
-  }
+  const text = await runStructuredPrompt(prompt, {
+    model,
+    format: {
+      type: "object",
+      properties: { content: { type: "string" } },
+      required: ["content"],
+    },
+    // A retry samples a little more freely, so a second attempt is not a rerun of the first.
+    temperature: attempt === 1 ? 0.35 : 0.55,
+    maxTokens: 2_048,
+    timeoutMs: 120_000,
+  });
+  const generated = parseContent(text);
+  validateGeneratedLetter(generated, job, evidence.resumeEvidence);
+  return {
+    content: generated,
+    method: `Draft written by ${providerLabel()}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
+    evidence,
+  };
 }
 
 export async function generateCoverLetterPdf(

@@ -1,6 +1,7 @@
 import { BorderStyle, Document, Packer, Paragraph, TextRun } from "docx";
 import PDFDocument from "pdfkit";
 import { db, getSetting } from "@/lib/database";
+import { activeModel, describeAiFailure, providerLabel } from "@/lib/llm";
 import { prioritizeResumeWithOllama } from "@/lib/local-ai";
 import { categorizeResumeSkills, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
 import {
@@ -191,16 +192,10 @@ export async function createResumeVersion(jobId: number): Promise<number> {
   let method = "Deterministic ATS tailoring";
   if (getSetting("local_ai_enabled", "0") === "1") {
     try {
-      content = await prioritizeResumeWithOllama(content, job, getSetting("ollama_model", "gemma3:4b"));
-      method = "Local AI evidence prioritization";
+      content = await prioritizeResumeWithOllama(content, job, activeModel());
+      method = `Evidence prioritized by ${providerLabel()}`;
     } catch (error) {
-      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-      const reason = timedOut
-        ? "the selected model did not finish within 120 seconds"
-        : error instanceof Error
-          ? error.message
-          : "Ollama was unavailable";
-      method = `Deterministic fallback because local AI failed: ${reason}`;
+      method = `Deterministic fallback because ${describeAiFailure(error)}`;
     }
   }
   const changeSummary = `${method}. Preserved ${content.sections?.reduce((total, section) => total + section.lines.length, 0) || 0} source lines and prioritized ${content.skills.length} verified skills for ${job.title}.`;

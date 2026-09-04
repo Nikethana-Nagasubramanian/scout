@@ -1,4 +1,5 @@
-import { db, getSetting } from "@/lib/database";
+import { db } from "@/lib/database";
+import { activeModel } from "@/lib/llm";
 import { suggestResumeBulletWithOllama, type ResumeRewriteTarget } from "@/lib/local-ai";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
 import type { Job, ResumeContent } from "@/lib/types";
@@ -92,7 +93,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       content,
       row,
       keyword,
-      getSetting("ollama_model", "gemma3:4b"),
+      activeModel(),
       target,
       userEvidence,
     );

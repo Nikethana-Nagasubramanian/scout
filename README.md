@@ -45,12 +45,33 @@ The first visit opens candidate onboarding.
 | Target companies | Early company hiring momentum worth validating before contact research and outreach. |
 | Job sources | Choose where Scout looks. Public discovery feeds need no company names; add VC portfolios or company directories to widen official board coverage. Shows Exa credit warnings. |
 | Candidate profile | The single source of truth for matching and resume generation. |
-| Settings | Collection times, Ollama toggle, and related preferences. |
+| Settings | Collection times, AI provider and model, and related preferences. |
 | Workflow diagnostics | Per fetch step logs, timings, and counts for debugging a collection run. |
 
 ## Resume workflow
 
 Prepare a job from the Jobs page to generate a tailored resume draft. Drafts land in the Resume queue, where each version can be expanded, regenerated, approved, or rejected. Approving a resume moves the role forward into Applications. Scout keeps earlier versions so you can compare what changed, and never lets a model invent resume claims.
+
+## AI provider
+
+Scout can use either a local Ollama model or the Claude API for resume evidence prioritization
+and cover letter drafting. Pick one under Provider on the Settings page. Both are optional:
+with AI turned off, or when the chosen provider is unreachable, Scout falls back to a
+deterministic draft and says so in the line beside the letter.
+
+Ollama keeps every request on your Mac and costs nothing, but it is slow and the smaller
+models are unreliable. The Claude API is faster and writes noticeably better, and it sends the
+job posting and your resume evidence to Anthropic.
+
+For the Claude API, put the key in `.env`, which is ignored by git:
+
+```text
+ANTHROPIC_API_KEY=your-key-here
+```
+
+The model is a setting and defaults to `claude-haiku-4-5`, the cheapest current model. One
+application costs roughly 8000 input and 1000 output tokens across its five calls, which at
+Haiku pricing is well under a cent, so a normal month of applying costs a few tens of cents.
 
 ## Ollama
 

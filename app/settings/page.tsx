@@ -5,6 +5,7 @@ import { runWorkflowAction, saveSettingsAction } from "@/app/actions";
 import { PageHeader, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { getSetting } from "@/lib/database";
+import { aiProvider, anthropicConfigured, DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,9 @@ export default async function SettingsPage() {
   const mode = getSetting("collection_mode", "manual");
   const schedulerInstalled = existsSync(join(homedir(), "Library", "LaunchAgents", "local.scout.job-collector.plist"));
   const selectedModel = getSetting("ollama_model", "gemma3:4b");
+  const provider = aiProvider();
+  const claudeKeyPresent = anthropicConfigured();
+  const selectedClaudeModel = getSetting("anthropic_model", DEFAULT_ANTHROPIC_MODEL);
   const installedModels = await installedOllamaModels();
   const modelOptions = installedModels.includes(selectedModel) ? installedModels : [selectedModel, ...installedModels];
 
@@ -130,12 +134,35 @@ export default async function SettingsPage() {
         </section>
 
         <section className="form-section">
-          <h2>Optional local AI</h2>
-          <p>When enabled, Scout asks Ollama to rank your existing skills and resume lines for each job. It cannot add or rewrite claims. Resume generation falls back safely when Ollama is not running.</p>
+          <h2>Optional AI assistance</h2>
+          <p>When enabled, Scout asks a model to rank your existing skills and resume lines for each job, and to draft cover letters. It cannot add or rewrite claims. Everything falls back to a deterministic draft when the model is unavailable.</p>
           <label className="check-label">
             <input type="checkbox" name="local_ai_enabled" defaultChecked={getSetting("local_ai_enabled", "0") === "1"} />
-            Use local Ollama for resume evidence prioritization
+            Use AI for resume evidence prioritization and cover letters
           </label>
+          <div className="field">
+            <label htmlFor="ai_provider">Provider</label>
+            <select id="ai_provider" name="ai_provider" defaultValue={provider}>
+              <option value="ollama">Ollama on this Mac</option>
+              <option value="anthropic">Claude API</option>
+            </select>
+            <small>
+              Ollama keeps every request on your Mac and costs nothing. The Claude API is faster and
+              writes better, costs a small amount per job, and sends the posting and your resume
+              evidence to Anthropic.
+            </small>
+          </div>
+          {provider === "anthropic" && !claudeKeyPresent ? (
+            <p className="callout warning">
+              ANTHROPIC_API_KEY is not set, so Claude requests will fail and Scout will fall back to a
+              deterministic draft. Add the key to your .env file and restart.
+            </p>
+          ) : null}
+          <div className="field">
+            <label htmlFor="anthropic_model">Claude model</label>
+            <input id="anthropic_model" name="anthropic_model" defaultValue={selectedClaudeModel} />
+            <small>Used when the provider is the Claude API. {DEFAULT_ANTHROPIC_MODEL} is the cheapest current model and handles this work well.</small>
+          </div>
           <div className="field">
             <label htmlFor="ollama_model">Ollama model</label>
             <select id="ollama_model" name="ollama_model" defaultValue={selectedModel}>

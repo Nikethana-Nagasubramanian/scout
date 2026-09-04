@@ -1,10 +1,6 @@
 import type { Job, ResumeContent } from "@/lib/types";
 import { normalizeSkillKey } from "@/lib/resume-skills";
 
-interface OllamaResponse {
-  response?: string;
-}
-
 interface ResumeRanking {
   skillOrder?: unknown;
 }
@@ -35,10 +31,7 @@ export type ResumeRewriteTarget =
   | { kind: "line"; sectionIndex: number; lineIndex: number }
   | { kind: "experience"; sectionIndex: number; entryLineIndex: number };
 
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
-// Loading a model from disk costs about as much as a whole request, so it is kept resident
-// long enough to cover a full resume and cover letter session.
-export const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || "30m";
+import { runStructuredPrompt } from "@/lib/llm";
 
 function parseStructuredResponse<T>(value: string): T {
   const cleaned = value
@@ -99,29 +92,19 @@ export async function prioritizeResumeWithOllama(
     }),
   ].join("\n");
 
-  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      prompt,
-      stream: false,
-      format: {
-        type: "object",
-        properties: {
-          skillOrder: { type: "array", items: { type: "string" } },
-        },
-        required: ["skillOrder"],
+  const text = await runStructuredPrompt(prompt, {
+    model,
+    format: {
+      type: "object",
+      properties: {
+        skillOrder: { type: "array", items: { type: "string" } },
       },
-      keep_alive: OLLAMA_KEEP_ALIVE,
-      options: { temperature: 0 },
-    }),
-    signal: AbortSignal.timeout(120_000),
+      required: ["skillOrder"],
+    },
+    maxTokens: 1_024,
+    timeoutMs: 120_000,
   });
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
-  const payload = await response.json() as OllamaResponse;
-  const ranking = parseRanking(payload.response || "{}");
-  return applyResumeRanking(content, ranking);
+  return applyResumeRanking(content, parseRanking(text));
 }
 
 function normalized(value: string): string {
@@ -248,31 +231,22 @@ export async function suggestResumeBulletWithOllama(
     }),
   ].join("\n");
 
-  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      prompt,
-      stream: false,
-      format: {
-        type: "object",
-        properties: {
-          supported: { type: "boolean" },
-          candidateId: { type: "string" },
-          suggestedBullet: { type: "string" },
-          reason: { type: "string" },
-        },
-        required: ["supported", "candidateId", "suggestedBullet", "reason"],
+  const text = await runStructuredPrompt(prompt, {
+    model,
+    format: {
+      type: "object",
+      properties: {
+        supported: { type: "boolean" },
+        candidateId: { type: "string" },
+        suggestedBullet: { type: "string" },
+        reason: { type: "string" },
       },
-      keep_alive: OLLAMA_KEEP_ALIVE,
-      options: { temperature: 0 },
-    }),
-    signal: AbortSignal.timeout(90_000),
+      required: ["supported", "candidateId", "suggestedBullet", "reason"],
+    },
+    maxTokens: 1_024,
+    timeoutMs: 90_000,
   });
-  if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
-  const payload = await response.json() as OllamaResponse;
-  const parsed = parseStructuredResponse<ResumeBulletSuggestionResponse>(payload.response || "{}");
+  const parsed = parseStructuredResponse<ResumeBulletSuggestionResponse>(text);
   const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "No explanation was returned.";
   if (parsed.supported !== true) {
     return {

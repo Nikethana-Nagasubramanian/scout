@@ -1,5 +1,6 @@
 import { enrichCoverLetterJob, generateCoverLetterDraft } from "@/lib/cover-letter";
 import { db, getSetting } from "@/lib/database";
+import { activeModel } from "@/lib/llm";
 import { buildResumeContent } from "@/lib/resume";
 import type { CandidateFact, CandidateProfile, Job, ResumeContent } from "@/lib/types";
 import { safeJson } from "@/lib/utils";
@@ -53,7 +54,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const draft = await generateCoverLetterDraft(
     enrichedJob,
     resolved.content,
-    getSetting("ollama_model", "gemma3:4b"),
+    activeModel(),
     getSetting("local_ai_enabled", "0") === "1",
     candidateNote,
   );

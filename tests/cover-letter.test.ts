@@ -85,7 +85,7 @@ describe("cover letter generation", () => {
     }), { status: 200 })));
     const draft = await generateCoverLetterDraft(job, resume, "test-model", true);
     expect(draft.content).toBe(generated);
-    expect(draft.method).toContain("Local AI draft");
+    expect(draft.method).toContain("Draft written by");
   });
 
   it("rejects fabricated metrics and returns the factual fallback", async () => {

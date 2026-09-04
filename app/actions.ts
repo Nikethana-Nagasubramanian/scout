@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
 import { db, setSetting } from "@/lib/database";
+import { DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
 import { clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
 import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
@@ -527,6 +528,9 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   setSetting("search_max_age_days", String(Math.max(1, nullableNumber(formData, "search_max_age_days") ?? 60)));
   setSetting("local_ai_enabled", formData.get("local_ai_enabled") ? "1" : "0");
   setSetting("ollama_model", text(formData, "ollama_model") || "gemma3:4b");
+  const provider = text(formData, "ai_provider");
+  setSetting("ai_provider", provider === "anthropic" ? "anthropic" : "ollama");
+  setSetting("anthropic_model", text(formData, "anthropic_model") || DEFAULT_ANTHROPIC_MODEL);
   clearEligibilityOverrides();
   scoreAllJobs();
   revalidatePath("/settings");
