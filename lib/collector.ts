@@ -29,7 +29,7 @@ import { reconcileDuplicateJobs } from "@/lib/job-deduplication";
 import {
   assessJobEligibility,
   broadDiscoverySearchTitles,
-  isProductDesignRoleFamily,
+  classifyRoleFamily,
   type JobFitPreferences,
 } from "@/lib/job-fit";
 import { buildConfidenceSummary, buildMatchSummary, scoreJob, scorePostingConfidence } from "@/lib/scoring";
@@ -1552,7 +1552,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
           }
         });
         saveHiringSignals();
-        const roleFamilyJobs = fetched.jobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+        const roleFamilyJobs = fetched.jobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
         jobsFound += roleFamilyJobs.length;
         const {
           evaluatedJobs,
@@ -1719,7 +1719,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
 
     try {
       const fetchedJobs = await fetchDiscoverySource(source, profile, sourceLog);
-      const roleFamilyJobs = fetchedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
       jobsFound += roleFamilyJobs.length;
       const {
         evaluatedJobs,
@@ -1880,7 +1880,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
     try {
       const discoveryResult = await runCompanyDiscoverySource(runId, source);
       if (discoveryResult.directJobs.length) {
-        const roleFamilyJobs = discoveryResult.directJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+        const roleFamilyJobs = discoveryResult.directJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
         jobsFound += roleFamilyJobs.length;
         const {
           evaluatedJobs,
@@ -2029,7 +2029,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
 
     try {
       const fetchedJobs = await fetchSource(source, sourceLog);
-      const roleFamilyJobs = fetchedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
       jobsFound += roleFamilyJobs.length;
       const {
         evaluatedJobs,

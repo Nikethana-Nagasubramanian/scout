@@ -4,6 +4,11 @@ Scout is a private job search app for one candidate. It collects jobs, scores ma
 
 Job discovery starts from the role, location, seniority, and experience saved during onboarding. Remotive, Jobicy, and Himalayas are built in and do not require an API key. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
 
+A job is kept when its title is one Scout searches for. When the title is unusual but the
+description reads like product design work, the job is kept for review rather than dropped,
+so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design
+disciplines, hardware roles, and leadership titles are still filtered out.
+
 Boards are checked on a schedule that follows what they produce. A board that yields a
 relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and
 then a weekly check, and nothing is ever deleted, so a company that starts hiring again

@@ -70,6 +70,48 @@ export function broadDiscoverySearchTitles(profile: CandidateProfile): string[] 
   return jobSearchTitles(profile).filter((title) => !ambiguousEngineeringTitles.has(normalizeText(title)));
 }
 
+/**
+ * Titles from a different design discipline. A description full of product words should not
+ * rescue these, because the craft itself is not the one being searched for.
+ */
+const otherDesignDisciplinePattern = /\b(?:graphic|brand|marketing|motion|3d|game|sound|audio|instructional|packaging|interior|fashion|textile|jewell?ery|landscape|architectural|industrial)\b/i;
+
+/**
+ * Titles worth reading the description for. Product design work is advertised under many
+ * names, so a title only has to look design adjacent to earn a closer look.
+ */
+const designAdjacentTitlePattern = /\b(?:design|designer|ux|ui|prototyper|creative technologist|product engineer|product technologist)\b/i;
+
+// Distinct signals rather than one keyword list, so a single stray mention of React in an
+// unrelated posting cannot promote it on its own.
+const digitalDesignSignalPatterns = [
+  /\b(?:figma|sketch app|framer|protopie)\b/i,
+  /\b(?:design systems?|component librar(?:y|ies))\b/i,
+  /\b(?:user research|usability test\w*|user interviews?)\b/i,
+  /\b(?:wireframes?|prototyp\w+|mockups?)\b/i,
+  /\b(?:user experience|user interface|interaction design|information architecture)\b/i,
+  /\b(?:react|typescript|frontend|front-end|web app\w*|mobile app\w*)\b/i,
+  /\b(?:product designer|design partner|cross-functional product team)\b/i,
+];
+
+export type RoleFamilyMatch = "match" | "possible" | "no";
+
+export function digitalDesignSignalCount(description: string): number {
+  return digitalDesignSignalPatterns.filter((pattern) => pattern.test(description)).length;
+}
+
+/**
+ * Three-way role family check. "possible" means the title is not one Scout searches for, but
+ * the posting reads like product design work, so a person should decide instead of a regex.
+ */
+export function classifyRoleFamily(title: string, description = ""): RoleFamilyMatch {
+  if (isProductDesignRoleFamily(title, description)) return "match";
+  if (hardwareDesignTitlePattern.test(title) || otherDesignDisciplinePattern.test(title)) return "no";
+  if (!designAdjacentTitlePattern.test(title)) return "no";
+  if (!description.trim() || hardwareDesignDescriptionPattern.test(description)) return "no";
+  return digitalDesignSignalCount(description) >= 2 ? "possible" : "no";
+}
+
 export function isProductDesignRoleFamily(title: string, description = ""): boolean {
   if (productDesignerPattern.test(title) || uiUxDesignerPattern.test(title)) return true;
   if (!designEngineerPattern.test(title) || hardwareDesignTitlePattern.test(title)) return false;
@@ -170,11 +212,13 @@ export function assessJobEligibility(
 ): JobEligibilityAssessment {
   const filterReasons: string[] = [];
   const verificationReasons: string[] = [];
-  const allowedTargetRole = isProductDesignRoleFamily(job.title, job.description);
+  const roleFamily = classifyRoleFamily(job.title, job.description);
   if (excludedLeadershipPattern.test(job.title)) {
     filterReasons.push("The title is a Lead, Staff, Principal, Manager, Director, or executive role.");
-  } else if (!allowedTargetRole) {
+  } else if (roleFamily === "no") {
     filterReasons.push("The title is not Product Designer, UI/UX Designer, or a digital Design Engineer role.");
+  } else if (roleFamily === "possible") {
+    verificationReasons.push("The title is not one Scout searches for, but the description reads like product design work.");
   }
 
   const earlyCareerTitle = /\b(?:intern|internship|new grad)\b/i.test(job.title);

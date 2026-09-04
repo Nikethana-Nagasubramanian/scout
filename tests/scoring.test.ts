@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scoreJob, scorePostingConfidence } from "@/lib/scoring";
+import { assessJobEligibility, classifyRoleFamily, digitalDesignSignalCount } from "@/lib/job-fit";
 import type { CandidateProfile, Job } from "@/lib/types";
 
 const profile: CandidateProfile = {
@@ -348,5 +349,73 @@ describe("scorePostingConfidence", () => {
     const repeated = scorePostingConfidence(job({ seen_count: 4 }), 5);
     expect(repeated.total).toBeGreaterThan(first.total);
     expect(repeated.positiveSignals.join(" ")).toContain("collection runs");
+  });
+});
+
+describe("role family classification", () => {
+  const digitalDescription = "Own end to end product design in Figma, run user research, and ship design systems with React engineers.";
+
+  it("still matches the titles Scout searches for", () => {
+    expect(classifyRoleFamily("Senior Product Designer")).toBe("match");
+    expect(classifyRoleFamily("UX/UI Designer")).toBe("match");
+    expect(classifyRoleFamily("Product Design Engineer", "Build React interfaces using Figma and TypeScript.")).toBe("match");
+  });
+
+  it("keeps an unusual design title for review instead of dropping it", () => {
+    expect(classifyRoleFamily("Interaction Designer", digitalDescription)).toBe("possible");
+    expect(classifyRoleFamily("Experience Designer", digitalDescription)).toBe("possible");
+    expect(classifyRoleFamily("Product Technologist", digitalDescription)).toBe("possible");
+  });
+
+  it("still rejects other design disciplines whatever the description says", () => {
+    expect(classifyRoleFamily("Graphic Designer", digitalDescription)).toBe("no");
+    expect(classifyRoleFamily("Motion Designer", digitalDescription)).toBe("no");
+    expect(classifyRoleFamily("Industrial Designer", digitalDescription)).toBe("no");
+  });
+
+  it("still rejects hardware roles", () => {
+    expect(classifyRoleFamily("Mechanical Design Engineer", digitalDescription)).toBe("no");
+    expect(classifyRoleFamily("Design Engineer", "Own mechanical architecture and SolidWorks CAD drawings.")).toBe("no");
+  });
+
+  it("does not rescue a role on one stray keyword", () => {
+    expect(classifyRoleFamily("Experience Designer", "Design retail store experiences for shoppers using React of the brand.")).toBe("no");
+    expect(digitalDesignSignalCount("We use React.")).toBe(1);
+  });
+
+  it("ignores a title with no design signal at all", () => {
+    expect(classifyRoleFamily("Backend Engineer", digitalDescription)).toBe("no");
+    expect(classifyRoleFamily("Account Executive", digitalDescription)).toBe("no");
+  });
+
+  it("keeps filtering leadership titles even when the description fits", () => {
+    for (const title of ["Director, Product Design", "Lead UX Designer", "Staff Interaction Designer"]) {
+      const assessment = assessJobEligibility(
+        { title, location: "New York, NY", description: digitalDescription, workplaceType: "hybrid", postedAt: new Date().toISOString() },
+        profile,
+        { usaOnly: true, minimumExperience: 2, maximumExperience: 8, maximumAgeDays: 45 },
+      );
+      expect(assessment.status).toBe("filtered");
+    }
+  });
+
+  it("does not rescue an engineering role on an incidental title word", () => {
+    expect(classifyRoleFamily("Senior Frontend Software Engineer, Home Experience", digitalDescription)).toBe("no");
+  });
+
+  it("routes a possible match to verification rather than eligible", () => {
+    const assessment = assessJobEligibility(
+      {
+        title: "Interaction Designer",
+        location: "New York, NY",
+        description: digitalDescription,
+        workplaceType: "hybrid",
+        postedAt: new Date().toISOString(),
+      },
+      profile,
+      { usaOnly: true, minimumExperience: 2, maximumExperience: 8, maximumAgeDays: 45 },
+    );
+    expect(assessment.status).toBe("needs_verification");
+    expect(assessment.verificationReasons.join(" ")).toContain("reads like product design work");
   });
 });
