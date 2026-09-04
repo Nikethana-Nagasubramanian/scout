@@ -26,3 +26,34 @@ export const vcDiscoverySources = [
     excludeCompanies: "",
   },
 ] as const;
+
+// Exa discovery runs a small fixed set of natural-language queries. Exa is a semantic search
+// engine, so these are written as plain descriptions of the wanted role rather than with
+// keyword operators. Domain filtering is a separate request parameter, not query syntax.
+export const exaQueryPresets = [
+  {
+    query: "Currently open US Product Designer or Design Engineer roles at startups where designers build working prototypes using React, TypeScript, Claude Code, Cursor, or other AI coding tools.",
+    kind: "ats_daily",
+    minimumIntervalMinutes: 1_440,
+  },
+  {
+    query: "Currently open US Product Designer roles involving complex B2B workflows, data visualization, decision-support products, maps, geospatial interfaces, or location intelligence.",
+    kind: "ats_daily",
+    minimumIntervalMinutes: 1_440,
+  },
+  {
+    query: "Currently open US Product Designer or Product Engineer roles with 0-to-1 ownership and close collaboration with founders and engineers.",
+    kind: "ats_daily",
+    minimumIntervalMinutes: 1_440,
+  },
+  {
+    query: "Currently open US Product Designer roles for AI products involving user research, rapid experimentation, functional prototypes, design systems, and production implementation.",
+    kind: "ats_daily",
+    minimumIntervalMinutes: 1_440,
+  },
+  {
+    query: "Product Designer, Design Engineer, or Product Engineer openings at fast-growing US startups for someone experienced in data-heavy products, AI-assisted coded prototypes, design systems, and ambiguous 0-to-1 work. Return direct company career or application pages.",
+    kind: "open_weekly",
+    minimumIntervalMinutes: 10_080,
+  },
+] as const;

@@ -17,10 +17,13 @@ import {
   parseHiringNewsletterSignals,
 } from "@/lib/gmail-alerts";
 import {
-  companyDiscoveryQueries,
+  canonicalJobUrl,
+  dueExaQueries,
+  EXA_ATS_DOMAINS,
   exaBudgetStatus,
   exaConfigured,
-  searchCompanies,
+  recordQueryRun,
+  searchExa,
 } from "@/lib/exa-discovery";
 import { reconcileDuplicateJobs } from "@/lib/job-deduplication";
 import {
@@ -837,17 +840,17 @@ async function discoverBoardsFromCompanyLink(
 
 const MAX_EXA_COMPANIES_PER_RUN = 8;
 
-async function runExaCompanyDiscovery(runId: number, profile: CandidateProfile): Promise<number> {
+async function runExaDiscovery(runId: number): Promise<number> {
   const log: RequestLogger = (step, level, message, details, durationMs) => {
     writeWorkflowLog(runId, null, step, level, message, details, durationMs);
   };
   if (!exaConfigured()) {
-    log("exa.skipped", "info", "Exa company discovery is off because EXA_API_KEY is not set.", {});
+    log("exa.skipped", "info", "Exa discovery is off because EXA_API_KEY is not set.", {});
     return 0;
   }
   const budgetBefore = exaBudgetStatus();
   if (budgetBefore.state === "exhausted") {
-    log("exa.budget_exhausted", "warning", `Exa company discovery is paused. ${budgetBefore.exhaustedReason}`, {
+    log("exa.budget_exhausted", "warning", `Exa discovery is paused. ${budgetBefore.exhaustedReason}`, {
       spentDollars: budgetBefore.used,
       budgetDollars: budgetBefore.budget,
     });
@@ -855,53 +858,78 @@ async function runExaCompanyDiscovery(runId: number, profile: CandidateProfile):
   }
 
   const startedAt = Date.now();
-  const queries = companyDiscoveryQueries(profile);
-  // Hosts already reachable through a tracked board are not worth paying to rediscover.
-  const knownHosts = new Set((db.prepare(
-    "SELECT discovered_from_url FROM job_sources WHERE discovered_from_url <> ''",
-  ).all() as Array<{ discovered_from_url: string }>).flatMap((row) => {
-    try {
-      return [new URL(row.discovered_from_url).hostname.replace(/^www\./, "")];
-    } catch {
-      return [];
-    }
-  }));
+  const queries = dueExaQueries();
+  if (!queries.length) {
+    log("exa.not_due", "info", "No Exa query is due yet. Each one runs at most once a day, and the open web query once a week.", {});
+    return 0;
+  }
 
-  const candidates = new Map<string, { url: string; title: string }>();
+  const seenUrls = new Set<string>();
+  const companyCandidates = new Map<string, { url: string; title: string }>();
+  let boardsAdded = 0;
   let spent = 0;
   let stoppedEarly = false;
+
   for (const query of queries) {
-    const outcome = await searchCompanies(query);
+    const isAtsQuery = query.kind === "ats_daily";
+    const outcome = await searchExa(query.query, {
+      includeDomains: isAtsQuery ? EXA_ATS_DOMAINS : undefined,
+    });
     spent += outcome.costDollars;
     if (outcome.error) {
-      log(outcome.exhausted ? "exa.budget_exhausted" : "exa.search_failed", "warning", outcome.error, { query });
+      log(outcome.exhausted ? "exa.budget_exhausted" : "exa.search_failed", "warning", outcome.error, { query: query.query });
       if (outcome.exhausted) {
         stoppedEarly = true;
         break;
       }
       continue;
     }
+
+    let usefulResults = 0;
     for (const result of outcome.results) {
+      // Deduplicate by canonical URL before doing anything that costs a request.
+      const canonical = canonicalJobUrl(result.url);
+      if (seenUrls.has(canonical)) continue;
+      seenUrls.add(canonical);
+      usefulResults += 1;
+
+      if (isAtsQuery) {
+        // These results are job postings on known ATS hosts, so the board is already in the
+        // URL and no crawling is needed to find it.
+        const board = detectAtsBoardFromUrl(result.url);
+        // The board covers the whole company, so name it after the board identifier rather
+        // than the one job title Exa happened to return.
+        if (board && persistDetectedBoard(board.identifier, board, {
+          name: "Exa job search",
+          url: result.url,
+        })) boardsAdded += 1;
+        continue;
+      }
+
       try {
         const host = new URL(result.url).hostname.replace(/^www\./, "");
-        if (knownHosts.has(host) || candidates.has(host)) continue;
-        candidates.set(host, { url: result.url, title: result.title || host });
+        if (!companyCandidates.has(host)) companyCandidates.set(host, { url: result.url, title: result.title || host });
       } catch {
         continue;
       }
     }
-    log("exa.search_complete", "info", `Exa returned ${outcome.results.length} companies for "${query}".`, {
-      query,
+
+    recordQueryRun(query.id, usefulResults);
+    log("exa.search_complete", "info", `Exa returned ${outcome.results.length} results for a ${isAtsQuery ? "daily ATS" : "weekly open web"} query.`, {
+      query: query.query,
+      kind: query.kind,
       results: outcome.results.length,
+      newResults: usefulResults,
       costDollars: outcome.costDollars,
     });
   }
 
-  const inspecting = [...candidates.values()].slice(0, MAX_EXA_COMPANIES_PER_RUN);
-  let boardsAdded = 0;
+  // Only the open web query needs site inspection, and only for pages that are not already
+  // an ATS board Scout can read directly.
+  const inspecting = [...companyCandidates.values()].slice(0, MAX_EXA_COMPANIES_PER_RUN);
   for (const candidate of inspecting) {
     const boards = await discoverBoardsFromCompanyLink(candidate.title, candidate.url, log, {
-      name: "Exa company discovery",
+      name: "Exa open web discovery",
       url: candidate.url,
     });
     boardsAdded += boards.length;
@@ -911,10 +939,10 @@ async function runExaCompanyDiscovery(runId: number, profile: CandidateProfile):
   log(
     "exa.discovery_complete",
     budgetAfter.state === "ok" ? "success" : "warning",
-    `Exa discovery ran ${queries.length} ${queries.length === 1 ? "query" : "queries"}, found ${candidates.size} untracked companies, inspected ${inspecting.length}, and saved ${boardsAdded} official boards. Spent ${spent.toFixed(3)} dollars this run, ${budgetAfter.used.toFixed(2)} of ${budgetAfter.budget.toFixed(2)} total.`,
+    `Exa ran ${queries.length} ${queries.length === 1 ? "query" : "queries"}, saw ${seenUrls.size} unique results, inspected ${inspecting.length} company pages, and saved ${boardsAdded} official boards. Spent ${spent.toFixed(3)} dollars this run, ${budgetAfter.used.toFixed(2)} of ${budgetAfter.budget.toFixed(2)} total.`,
     {
-      queries,
-      companiesFound: candidates.size,
+      queriesRun: queries.length,
+      uniqueResults: seenUrls.size,
       companiesInspected: inspecting.length,
       boardsAdded,
       runCostDollars: Number(spent.toFixed(4)),
@@ -2136,7 +2164,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
     }
   });
 
-  if (!gmailOnly) await runExaCompanyDiscovery(runId, profile);
+  if (!gmailOnly) await runExaDiscovery(runId);
 
   const atsDiscoveryStartedAt = Date.now();
   writeWorkflowLog(

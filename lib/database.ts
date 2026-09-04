@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { focusedHiringCafeUrl, vcDiscoverySources } from "@/lib/source-presets";
+import { exaQueryPresets, focusedHiringCafeUrl, vcDiscoverySources } from "@/lib/source-presets";
 
 const databasePath = join(process.cwd(), "data", "job-copilot.sqlite");
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -85,6 +85,18 @@ db.exec(`
     last_error TEXT NOT NULL DEFAULT '',
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     query_cursor INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS exa_queries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL CHECK (kind IN ('ats_daily', 'open_weekly')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    minimum_interval_minutes INTEGER NOT NULL DEFAULT 1440,
+    last_run_at TEXT,
+    last_result_count INTEGER NOT NULL DEFAULT 0,
+    consecutive_zero_runs INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -451,6 +463,16 @@ if (!hiringCafeSeeded) {
   `).run(focusedHiringCafeUrl);
   db.prepare("INSERT INTO settings (key, value) VALUES ('hiring_cafe_source_seeded', '1')").run();
 }
+
+const insertExaQuery = db.prepare(`
+  INSERT INTO exa_queries (query, kind, minimum_interval_minutes)
+  VALUES (?, ?, ?)
+  ON CONFLICT(query) DO NOTHING
+`);
+const seedExaQueries = db.transaction(() => {
+  for (const entry of exaQueryPresets) insertExaQuery.run(entry.query, entry.kind, entry.minimumIntervalMinutes);
+});
+seedExaQueries();
 
 const hiringCafeRetired = db.prepare("SELECT value FROM settings WHERE key = 'hiring_cafe_retired'").get() as { value: string } | undefined;
 if (!hiringCafeRetired) {

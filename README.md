@@ -83,9 +83,23 @@ The Contact research page uses Hunter to find an evidence backed contact for a r
 ## Company discovery with Exa
 
 Scout uses [Exa](https://exa.ai) to find companies that are hiring for your role but are not
-yet on any board it tracks. Each fetch runs a small number of queries built from your saved
-titles and preferred location, skips companies it already follows, and inspects the rest for
-an official Greenhouse, Ashby, or Lever board.
+yet on any board it tracks.
+
+Four natural-language queries run at most once a day against the known ATS hosts
+(`jobs.ashbyhq.com`, `jobs.lever.co`, and both Greenhouse board domains), looking back 30
+days. Those results are job postings whose board is already named in the URL, so Scout reads
+the board straight from the link without crawling anything.
+
+One broader query runs weekly with no domain filter, to catch companies whose careers page
+sits outside those hosts. Only that query leads to page inspection.
+
+Exa is a semantic search engine, so the queries are written as plain descriptions of the
+wanted role. Domain filtering is a request parameter rather than query syntax, and Scout
+never asks Exa to judge fit: scoring happens afterwards against the full job text. Results
+are deduplicated by canonical URL before anything is fetched, and a query that keeps
+returning nothing is run less often rather than deleted.
+
+Edit the queries in `lib/source-presets.ts`, or the `exa_queries` table to change cadence.
 
 Set the key in `.env.local`, which is ignored by git:
 
@@ -93,7 +107,8 @@ Set the key in `.env.local`, which is ignored by git:
 EXA_API_KEY=your-key-here
 ```
 
-Exa reports the exact price of every request, so Scout keeps a running total rather than an
+At Exa's current search price this costs well under a dollar a month. Exa reports the exact
+price of every request, so Scout keeps a running total rather than an
 estimate. The default budget is 10 dollars and can be changed with the `exa_budget_dollars`
 setting. Once spending passes 80 percent of it, the Job sources page shows a warning banner
 with the amount used, and Scout keeps searching. If Exa reports that the credits are gone,

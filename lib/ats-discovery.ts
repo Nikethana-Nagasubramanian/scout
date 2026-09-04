@@ -1,4 +1,4 @@
-export type AtsBoardType = "greenhouse" | "ashby";
+export type AtsBoardType = "greenhouse" | "ashby" | "lever";
 
 export interface DetectedAtsBoard {
   sourceType: AtsBoardType;
@@ -133,6 +133,17 @@ export function detectAtsBoardFromUrl(value: string): DetectedAtsBoard | null {
     if (identifier && !["embed", "jobs"].includes(identifier)) {
       return {
         sourceType: "greenhouse",
+        identifier: cleanIdentifier(identifier),
+        evidenceUrl: url.toString(),
+      };
+    }
+  }
+
+  if (host === "jobs.lever.co" || host === "api.lever.co" || host === "api.eu.lever.co") {
+    const identifier = parts[0];
+    if (identifier && !["v0", "postings"].includes(identifier)) {
+      return {
+        sourceType: "lever",
         identifier: cleanIdentifier(identifier),
         evidenceUrl: url.toString(),
       };
