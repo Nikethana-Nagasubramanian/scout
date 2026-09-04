@@ -83,7 +83,7 @@ describe("cover letter generation", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       response: JSON.stringify({ content: generated }),
     }), { status: 200 })));
-    const draft = await generateCoverLetterDraft(job, resume, "test-model", true);
+    const draft = await generateCoverLetterDraft(job, resume, true);
     expect(draft.content).toBe(generated);
     expect(draft.method).toContain("Draft written by");
   });
@@ -93,7 +93,7 @@ describe("cover letter generation", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       response: JSON.stringify({ content: generated }),
     }), { status: 200 })));
-    const draft = await generateCoverLetterDraft(job, resume, "test-model", true);
+    const draft = await generateCoverLetterDraft(job, resume, true);
     expect(draft.method).toContain("Structured fallback");
     expect(draft.content).not.toContain("99%");
   });

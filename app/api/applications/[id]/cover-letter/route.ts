@@ -1,6 +1,5 @@
 import { enrichCoverLetterJob, generateCoverLetterDraft } from "@/lib/cover-letter";
 import { db, getSetting } from "@/lib/database";
-import { activeModel } from "@/lib/llm";
 import { buildResumeContent } from "@/lib/resume";
 import type { CandidateFact, CandidateProfile, Job, ResumeContent } from "@/lib/types";
 import { safeJson } from "@/lib/utils";
@@ -48,15 +47,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!Number.isFinite(numericId)) return Response.json({ error: "Invalid application" }, { status: 400 });
   const resolved = applicationContext(numericId);
   if (!resolved) return Response.json({ error: "Application not found" }, { status: 404 });
-  const body = await request.json().catch(() => ({})) as { candidateNote?: unknown };
+  const body = await request.json().catch(() => ({})) as { candidateNote?: unknown; provider?: unknown };
   const candidateNote = typeof body.candidateNote === "string" ? body.candidateNote.trim().slice(0, 800) : "";
+  // A manual retry pins one provider for this request only, without changing the setting.
+  const providerOverride = body.provider === "ollama" || body.provider === "anthropic" ? body.provider : undefined;
   const enrichedJob = await enrichCoverLetterJob(resolved.application);
   const draft = await generateCoverLetterDraft(
     enrichedJob,
     resolved.content,
-    activeModel(),
     getSetting("local_ai_enabled", "0") === "1",
     candidateNote,
+    providerOverride,
   );
   db.prepare(`
     INSERT INTO cover_letters (application_id, content, generation_method, evidence_json, candidate_note, status)

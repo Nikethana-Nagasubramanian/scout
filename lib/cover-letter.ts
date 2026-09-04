@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { describeAiFailure, providerLabel, runStructuredPrompt } from "@/lib/llm";
+import { describeAiFailure, providerChain, providerLabel, runStructuredPrompt, type AiProvider } from "@/lib/llm";
 import type { Job, ResumeContent } from "@/lib/types";
 
 interface CoverLetterResponse {
@@ -249,9 +249,9 @@ function validateGeneratedLetter(letter: string, job: Job, evidence: string[]): 
 export async function generateCoverLetterDraft(
   job: Job,
   content: ResumeContent,
-  model: string,
   localAiEnabled: boolean,
   candidateNote = "",
+  providerOverride?: AiProvider,
 ): Promise<CoverLetterDraft> {
   const fallback = deterministicCoverLetter(job, content, candidateNote);
   if (!localAiEnabled) return fallback;
@@ -280,30 +280,32 @@ export async function generateCoverLetterDraft(
     }),
   ].join("\n");
 
-  const attempts: string[] = [];
-  for (let attempt = 1; attempt <= MAX_LOCAL_AI_ATTEMPTS; attempt += 1) {
-    try {
-      return await requestLocalDraft(prompt, model, evidence, job, attempt);
-    } catch (error) {
-      const reason = describeAiFailure(error);
-      attempts.push(reason);
-      // A length or trope miss is worth one more sample from the same model. A connection
-      // failure or a rejected key will not fix itself, so stop asking.
-      if (/fetch failed|ECONNREFUSED|Ollama returned|API key|rate limit|not set/i.test(reason)) break;
+  const failures: string[] = [];
+  for (const provider of await providerChain(providerOverride)) {
+    for (let attempt = 1; attempt <= MAX_LOCAL_AI_ATTEMPTS; attempt += 1) {
+      try {
+        return await requestLocalDraft(prompt, provider, evidence, job, attempt);
+      } catch (error) {
+        const reason = describeAiFailure(error);
+        failures.push(`${providerLabel(provider)}: ${reason}`);
+        // A length or trope miss is worth one more sample from the same model. A connection
+        // failure or a rejected key will not fix itself, so move on to the next provider.
+        if (/fetch failed|ECONNREFUSED|Ollama returned|API key|rate limit|not set|rejected/i.test(reason)) break;
+      }
     }
   }
-  return { ...fallback, method: `Structured fallback because ${attempts[attempts.length - 1]}` };
+  return { ...fallback, method: `Structured fallback because ${failures[failures.length - 1] || "no provider was available"}` };
 }
 
 async function requestLocalDraft(
   prompt: string,
-  model: string,
+  provider: AiProvider,
   evidence: CoverLetterDraft["evidence"],
   job: Job,
   attempt: number,
 ): Promise<CoverLetterDraft> {
   const text = await runStructuredPrompt(prompt, {
-    model,
+    provider,
     format: {
       type: "object",
       properties: { content: { type: "string" } },
@@ -318,7 +320,7 @@ async function requestLocalDraft(
   validateGeneratedLetter(generated, job, evidence.resumeEvidence);
   return {
     content: generated,
-    method: `Draft written by ${providerLabel()}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
+    method: `Draft written by ${providerLabel(provider)}${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
     evidence,
   };
 }

@@ -31,7 +31,20 @@ export type ResumeRewriteTarget =
   | { kind: "line"; sectionIndex: number; lineIndex: number }
   | { kind: "experience"; sectionIndex: number; entryLineIndex: number };
 
-import { runStructuredPrompt } from "@/lib/llm";
+import { providerChain, runStructuredPrompt } from "@/lib/llm";
+
+/** Tries each available provider in turn, so a Claude outage falls through to Ollama. */
+async function runWithFallback(prompt: string, options: Parameters<typeof runStructuredPrompt>[1]): Promise<string> {
+  let lastError: unknown = new Error("no provider was available");
+  for (const provider of await providerChain()) {
+    try {
+      return await runStructuredPrompt(prompt, { ...options, provider });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
 
 function parseStructuredResponse<T>(value: string): T {
   const cleaned = value
@@ -76,7 +89,6 @@ export function applyResumeRanking(content: ResumeContent, ranking: ResumeRankin
 export async function prioritizeResumeWithOllama(
   content: ResumeContent,
   job: Job,
-  model: string,
 ): Promise<ResumeContent> {
   const prompt = [
     "You rank existing candidate skills for an ATS-safe resume.",
@@ -92,8 +104,7 @@ export async function prioritizeResumeWithOllama(
     }),
   ].join("\n");
 
-  const text = await runStructuredPrompt(prompt, {
-    model,
+  const text = await runWithFallback(prompt, {
     format: {
       type: "object",
       properties: {
@@ -231,8 +242,7 @@ export async function suggestResumeBulletWithOllama(
     }),
   ].join("\n");
 
-  const text = await runStructuredPrompt(prompt, {
-    model,
+  const text = await runWithFallback(prompt, {
     format: {
       type: "object",
       properties: {

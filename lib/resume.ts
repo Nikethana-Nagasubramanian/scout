@@ -1,7 +1,7 @@
 import { BorderStyle, Document, Packer, Paragraph, TextRun } from "docx";
 import PDFDocument from "pdfkit";
 import { db, getSetting } from "@/lib/database";
-import { activeModel, describeAiFailure, providerLabel } from "@/lib/llm";
+import { describeAiFailure, providerLabel } from "@/lib/llm";
 import { prioritizeResumeWithOllama } from "@/lib/local-ai";
 import { categorizeResumeSkills, normalizeResumeSkills, resumeSkillCategories } from "@/lib/resume-skills";
 import {
@@ -192,7 +192,7 @@ export async function createResumeVersion(jobId: number): Promise<number> {
   let method = "Deterministic ATS tailoring";
   if (getSetting("local_ai_enabled", "0") === "1") {
     try {
-      content = await prioritizeResumeWithOllama(content, job, activeModel());
+      content = await prioritizeResumeWithOllama(content, job);
       method = `Evidence prioritized by ${providerLabel()}`;
     } catch (error) {
       method = `Deterministic fallback because ${describeAiFailure(error)}`;

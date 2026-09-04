@@ -445,7 +445,7 @@ const defaultSettings: Record<string, string> = {
   search_max_age_days: "60",
   local_ai_enabled: "0",
   ollama_model: "gemma3:4b",
-  ai_provider: "ollama",
+  ai_provider: "anthropic",
   anthropic_model: "claude-haiku-4-5",
   hunter_credit_budget: "40",
   hunter_credits_used_by_scout: "0",

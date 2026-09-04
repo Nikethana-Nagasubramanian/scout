@@ -54,10 +54,18 @@ Prepare a job from the Jobs page to generate a tailored resume draft. Drafts lan
 
 ## AI provider
 
-Scout can use either a local Ollama model or the Claude API for resume evidence prioritization
-and cover letter drafting. Pick one under Provider on the Settings page. Both are optional:
-with AI turned off, or when the chosen provider is unreachable, Scout falls back to a
-deterministic draft and says so in the line beside the letter.
+Scout can use either the Claude API or a local Ollama model for resume evidence
+prioritization and cover letter drafting. Pick one under Provider on the Settings page. The
+default is the Claude API, and the order it tries is:
+
+1. Claude, when a key is set.
+2. Ollama, but only when it answers a quick reachability check. An Ollama that is not running
+   is skipped rather than waited on.
+3. A deterministic draft, which is instant and always available.
+
+The line beside a cover letter names whichever one produced it. When the draft came from the
+deterministic path, a Retry with Ollama button appears, so a slow local attempt is your
+choice rather than something you wait through by default.
 
 Ollama keeps every request on your Mac and costs nothing, but it is slow and the smaller
 models are unreliable. The Claude API is faster and writes noticeably better, and it sends the
@@ -68,6 +76,8 @@ For the Claude API, put the key in `.env`, which is ignored by git:
 ```text
 ANTHROPIC_API_KEY=your-key-here
 ```
+
+`CLAUDE_API_KEY` is accepted as an alias.
 
 The model is a setting and defaults to `claude-haiku-4-5`, the cheapest current model. One
 application costs roughly 8000 input and 1000 output tokens across its five calls, which at
@@ -87,8 +97,10 @@ silently falls back to a structured template, so check the line under a cover le
 names the model when local AI wrote it, and says so plainly when it did not.
 
 Local AI work is slow because it runs on your Mac, and roughly a third of a cold request is
-the model loading from disk. Scout keeps the model resident for 30 minutes, adjustable with
-`OLLAMA_KEEP_ALIVE`. If you want the resume suggestions to overlap rather than queue, start
+the model loading from disk. When Ollama is the chosen provider, Scout keeps the model
+resident for 30 minutes to avoid re-paying that. When it is only the fallback, the model is
+released as soon as the request finishes, so a rare fallback does not hold gigabytes of RAM
+on a small machine. Override either with `OLLAMA_KEEP_ALIVE`. If you want the resume suggestions to overlap rather than queue, start
 the server with `OLLAMA_NUM_PARALLEL=4 ollama serve`, which was worth about 17 percent in
 testing. Switching models between tasks forces a reload, so one model everywhere is faster
 than picking a different one per task.

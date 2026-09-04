@@ -50,14 +50,16 @@ export function CoverLetterEditor({
   const wordCount = content.split(/\s+/).filter(Boolean).length;
   const editorFormId = `cover-letter-editor-${applicationId}`;
 
-  async function generate(): Promise<void> {
+  async function generate(provider?: "ollama" | "anthropic"): Promise<void> {
     setGenerating(true);
-    setNotice("Drafting from the company mission, role, and approved resume evidence...");
+    setNotice(provider === "ollama"
+      ? "Retrying on the local model. This is slower than the API and can take a minute..."
+      : "Drafting from the company mission, role, and approved resume evidence...");
     try {
       const response = await fetch(`/api/applications/${applicationId}/cover-letter`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidateNote }),
+        body: JSON.stringify({ candidateNote, provider }),
       });
       const payload = await response.json() as CoverLetterResponse;
       if (!response.ok || !payload.coverLetter?.content) throw new Error(payload.error || "Cover letter generation failed");
@@ -155,11 +157,14 @@ export function CoverLetterEditor({
             {saving ? "Saving..." : "Save Cover Letter"}
           </button>
         ) : (
-          <button className="button cover-letter-primary" disabled={generating || saving} onClick={generate} type="button">
+          <button className="button cover-letter-primary" disabled={generating || saving} onClick={() => generate()} type="button">
             {generating ? <><span className="spinner" aria-hidden="true" /> Drafting...</> : "Generate Cover Letter"}
           </button>
         )}
-        {content ? <button className="button secondary" disabled={generating || saving} onClick={generate} type="button">Regenerate</button> : null}
+        {content ? <button className="button secondary" disabled={generating || saving} onClick={() => generate()} type="button">Regenerate</button> : null}
+        {content && method.startsWith("Structured fallback") ? (
+          <button className="button secondary" disabled={generating || saving} onClick={() => generate("ollama")} type="button">Retry with Ollama</button>
+        ) : null}
         <span className="cover-letter-trust-note">Scout never invents personal connections or experience.</span>
         {content ? <button className="button ghost cover-letter-utility" onClick={copy} type="button">Copy</button> : null}
         {savedContent ? <a className="button ghost cover-letter-utility" href={`/api/applications/${applicationId}/cover-letter/pdf`}>PDF</a> : null}
