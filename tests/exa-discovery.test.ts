@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { detectAtsBoardFromUrl } from "@/lib/ats-discovery";
+import { companyNameFromIdentifier } from "@/lib/collector";
 import {
   canonicalJobUrl,
   effectiveIntervalMinutes,
@@ -99,5 +100,18 @@ describe("board detection for the searched ATS hosts", () => {
       .toMatchObject({ sourceType: "greenhouse", identifier: "acme" });
     expect(detectAtsBoardFromUrl("https://job-boards.greenhouse.io/acme/jobs/123"))
       .toMatchObject({ sourceType: "greenhouse", identifier: "acme" });
+  });
+});
+
+describe("company names from board identifiers", () => {
+  it("presents a slug as a readable company name", () => {
+    expect(companyNameFromIdentifier("assembledhq")).toBe("Assembledhq");
+    expect(companyNameFromIdentifier("norm-ai")).toBe("Norm Ai");
+    expect(companyNameFromIdentifier("zero_g_talent")).toBe("Zero G Talent");
+  });
+
+  it("survives an empty or malformed identifier", () => {
+    expect(companyNameFromIdentifier("")).toBe("");
+    expect(companyNameFromIdentifier("--")).toBe("");
   });
 });

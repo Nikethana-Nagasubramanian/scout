@@ -840,6 +840,18 @@ async function discoverBoardsFromCompanyLink(
 
 const MAX_EXA_COMPANIES_PER_RUN = 8;
 
+/**
+ * A board identifier is a slug, but it becomes the company name on every job the board
+ * produces, so it is worth presenting properly.
+ */
+export function companyNameFromIdentifier(identifier: string): string {
+  return identifier
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 async function runExaDiscovery(runId: number): Promise<number> {
   const log: RequestLogger = (step, level, message, details, durationMs) => {
     writeWorkflowLog(runId, null, step, level, message, details, durationMs);
@@ -899,7 +911,7 @@ async function runExaDiscovery(runId: number): Promise<number> {
         const board = detectAtsBoardFromUrl(result.url);
         // The board covers the whole company, so name it after the board identifier rather
         // than the one job title Exa happened to return.
-        if (board && persistDetectedBoard(board.identifier, board, {
+        if (board && persistDetectedBoard(companyNameFromIdentifier(board.identifier), board, {
           name: "Exa job search",
           url: result.url,
         })) boardsAdded += 1;
