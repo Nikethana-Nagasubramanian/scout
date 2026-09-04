@@ -8,8 +8,10 @@ import {
   normalizeJobicyJobs,
   normalizeLeverJobs,
   normalizeRemotiveJobs,
+  nextSourceTier,
   parseRetryAfter,
   retryDelay,
+  tierIntervalMinutes,
 } from "@/lib/collector";
 import { parseHiringNewsletterSignals, parseJobAlertEmail } from "@/lib/gmail-alerts";
 import type { JobSource } from "@/lib/types";
@@ -25,6 +27,10 @@ const greenhouseSource: JobSource = {
   last_success_at: null,
   last_error: "",
   consecutive_failures: 0,
+  tier: "standard",
+  consecutive_zero_runs: 0,
+  last_relevant_job_at: null,
+  tier_changed_at: null,
   auto_discovered: 0,
   discovered_from_url: "",
   discovered_via_name: "",
@@ -393,5 +399,28 @@ describe("Gmail alert parsing", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].company).toBe("Vetcove");
     expect(jobs[0].title).toBe("Staff Product Designer");
+  });
+});
+
+describe("source tiering", () => {
+  it("promotes a board to the watchlist as soon as it produces a relevant role", () => {
+    expect(nextSourceTier("dormant", 12, 1)).toEqual({ tier: "watchlist", consecutiveZeroRuns: 0 });
+  });
+
+  it("keeps a board on its current tier while zero runs are still accumulating", () => {
+    expect(nextSourceTier("watchlist", 0, 0)).toEqual({ tier: "watchlist", consecutiveZeroRuns: 1 });
+  });
+
+  it("demotes to the standard schedule after three quiet checks", () => {
+    expect(nextSourceTier("watchlist", 2, 0)).toEqual({ tier: "standard", consecutiveZeroRuns: 3 });
+  });
+
+  it("demotes to the weekly dormant schedule after eight quiet checks", () => {
+    expect(nextSourceTier("standard", 7, 0)).toEqual({ tier: "dormant", consecutiveZeroRuns: 8 });
+  });
+
+  it("never drops a board below the weekly schedule", () => {
+    expect(nextSourceTier("dormant", 40, 0).tier).toBe("dormant");
+    expect(tierIntervalMinutes.dormant).toBe(10_080);
   });
 });

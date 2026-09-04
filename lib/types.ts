@@ -76,6 +76,10 @@ export interface JobSource {
   discovered_from_url: string;
   discovered_via_name: string;
   discovered_via_url: string;
+  tier: string;
+  consecutive_zero_runs: number;
+  last_relevant_job_at: string | null;
+  tier_changed_at: string | null;
   created_at: string;
 }
 

@@ -35,10 +35,52 @@ import type {
 } from "@/lib/types";
 import { parseList, stripHtml } from "@/lib/utils";
 
-const REQUEST_COOLDOWN_MS = 1_200;
+const REQUEST_COOLDOWN_MS = 250;
 const MAX_REQUEST_ATTEMPTS = 3;
 const MAX_INLINE_RETRY_MS = 30_000;
-const hostLastRequestAt = new Map<string, number>();
+const SOURCE_CONCURRENCY = 4;
+// Reserved start time for the next request to a host. Slots are claimed synchronously so
+// concurrent callers space themselves out instead of all waking against a single timestamp.
+const hostNextRequestAt = new Map<string, number>();
+
+export const sourceTiers = ["watchlist", "standard", "dormant"] as const;
+export type SourceTier = (typeof sourceTiers)[number];
+
+// How long a board rests after a successful check. Boards that keep producing relevant
+// roles are checked every run; ones that never do fall back to a weekly look.
+export const tierIntervalMinutes: Record<SourceTier, number> = {
+  watchlist: 60,
+  standard: 1_440,
+  dormant: 10_080,
+};
+
+const DEMOTE_TO_STANDARD_AFTER = 3;
+const DEMOTE_TO_DORMANT_AFTER = 8;
+
+export function nextSourceTier(currentTier: string, consecutiveZeroRuns: number, eligibleCount: number): {
+  tier: SourceTier;
+  consecutiveZeroRuns: number;
+} {
+  // Any genuinely relevant role promotes the board back to the frequent watchlist.
+  if (eligibleCount > 0) return { tier: "watchlist", consecutiveZeroRuns: 0 };
+  const zeroRuns = consecutiveZeroRuns + 1;
+  if (zeroRuns >= DEMOTE_TO_DORMANT_AFTER) return { tier: "dormant", consecutiveZeroRuns: zeroRuns };
+  if (zeroRuns >= DEMOTE_TO_STANDARD_AFTER) return { tier: "standard", consecutiveZeroRuns: zeroRuns };
+  const tier = sourceTiers.includes(currentTier as SourceTier) ? currentTier as SourceTier : "standard";
+  return { tier, consecutiveZeroRuns: zeroRuns };
+}
+
+async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
 
 type RequestLogger = (
   step: string,
@@ -245,13 +287,14 @@ export function retryDelay(attempt: number): number {
 
 async function respectHostCooldown(url: string, log: RequestLogger): Promise<void> {
   const host = new URL(url).host;
-  const elapsed = Date.now() - (hostLastRequestAt.get(host) || 0);
-  const waitMs = Math.max(0, REQUEST_COOLDOWN_MS - elapsed);
+  const now = Date.now();
+  const startAt = Math.max(now, hostNextRequestAt.get(host) || 0);
+  hostNextRequestAt.set(host, startAt + REQUEST_COOLDOWN_MS);
+  const waitMs = startAt - now;
   if (waitMs > 0) {
     log("request.cooldown", "info", `Waiting ${waitMs} ms before the next ${host} request.`, { host, waitMs });
     await sleep(waitMs);
   }
-  hostLastRequestAt.set(host, Date.now());
 }
 
 async function fetchWithRetry(url: string, log: RequestLogger, init: RequestInit = {}): Promise<Response> {
@@ -1194,7 +1237,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
     : db.prepare("SELECT * FROM discovery_sources WHERE enabled = 1 ORDER BY name").all() as DiscoverySource[];
   let sources = gmailOnly
     ? []
-    : db.prepare("SELECT * FROM job_sources WHERE enabled = 1 ORDER BY name").all() as JobSource[];
+    : db.prepare("SELECT * FROM job_sources WHERE enabled = 1 ORDER BY CASE tier WHEN 'watchlist' THEN 0 WHEN 'standard' THEN 1 ELSE 2 END, name").all() as JobSource[];
   const companyDiscoverySources = gmailOnly
     ? []
     : db.prepare("SELECT * FROM company_discovery_sources WHERE enabled = 1 ORDER BY name").all() as CompanyDiscoverySource[];
@@ -1817,9 +1860,9 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
 
   sources = gmailOnly
     ? []
-    : db.prepare("SELECT * FROM job_sources WHERE enabled = 1 ORDER BY name").all() as JobSource[];
+    : db.prepare("SELECT * FROM job_sources WHERE enabled = 1 ORDER BY CASE tier WHEN 'watchlist' THEN 0 WHEN 'standard' THEN 1 ELSE 2 END, name").all() as JobSource[];
 
-  for (const source of sources) {
+  await mapWithConcurrency(sources, SOURCE_CONCURRENCY, async (source) => {
     const cooldownUntil = source.cooldown_until ? new Date(source.cooldown_until).getTime() : 0;
     if (cooldownUntil > Date.now()) {
       skippedSources += 1;
@@ -1827,11 +1870,11 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
         runId,
         source.id,
         "source.cooldown",
-        "warning",
-        `${source.name} is cooling down until ${new Date(cooldownUntil).toLocaleString()}.`,
-        { cooldownUntil: new Date(cooldownUntil).toISOString() },
+        "info",
+        `${source.name} is resting on the ${source.tier || "standard"} schedule until ${new Date(cooldownUntil).toLocaleString()}.`,
+        { cooldownUntil: new Date(cooldownUntil).toISOString(), tier: source.tier || "standard" },
       );
-      continue;
+      return;
     }
 
     const sourceStartedAt = Date.now();
@@ -1920,14 +1963,32 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
         }
       });
       saveJobs();
+      const previousTier = source.tier || "standard";
+      const { tier, consecutiveZeroRuns } = nextSourceTier(previousTier, source.consecutive_zero_runs || 0, eligibleCount);
       db.prepare(`
         UPDATE job_sources SET
           last_success_at = CURRENT_TIMESTAMP,
           last_error = '',
           consecutive_failures = 0,
-          cooldown_until = datetime('now', '+60 minutes')
+          tier = ?,
+          consecutive_zero_runs = ?,
+          last_relevant_job_at = CASE WHEN ? > 0 THEN CURRENT_TIMESTAMP ELSE last_relevant_job_at END,
+          tier_changed_at = CASE WHEN tier = ? THEN tier_changed_at ELSE CURRENT_TIMESTAMP END,
+          cooldown_until = datetime('now', ?)
         WHERE id = ?
-      `).run(source.id);
+      `).run(tier, consecutiveZeroRuns, eligibleCount, tier, `+${tierIntervalMinutes[tier]} minutes`, source.id);
+      if (tier !== previousTier) {
+        writeWorkflowLog(
+          runId,
+          source.id,
+          "source.tier_changed",
+          "info",
+          eligibleCount > 0
+            ? `${source.name} produced a relevant role and moved to the frequent watchlist.`
+            : `${source.name} has had ${consecutiveZeroRuns} checks without a relevant role and moved to the ${tier} schedule.`,
+          { previousTier, tier, consecutiveZeroRuns, eligibleCount, nextCheckInMinutes: tierIntervalMinutes[tier] },
+        );
+      }
       successfulSources += 1;
       writeWorkflowLog(
         runId,
@@ -1973,7 +2034,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
         Date.now() - sourceStartedAt,
       );
     }
-  }
+  });
 
   const atsDiscoveryStartedAt = Date.now();
   writeWorkflowLog(

@@ -371,6 +371,10 @@ ensureColumn("job_sources", "auto_discovered", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("job_sources", "discovered_from_url", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("job_sources", "discovered_via_name", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("job_sources", "discovered_via_url", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("job_sources", "tier", "TEXT NOT NULL DEFAULT 'standard'");
+ensureColumn("job_sources", "consecutive_zero_runs", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("job_sources", "last_relevant_job_at", "TEXT");
+ensureColumn("job_sources", "tier_changed_at", "TEXT");
 ensureColumn("discovery_sources", "query_cursor", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("company_discovery_sources", "include_companies", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("company_discovery_sources", "exclude_companies", "TEXT NOT NULL DEFAULT ''");
@@ -446,6 +450,47 @@ if (!hiringCafeSeeded) {
     VALUES ('HiringCafe focused design search', ?)
   `).run(focusedHiringCafeUrl);
   db.prepare("INSERT INTO settings (key, value) VALUES ('hiring_cafe_source_seeded', '1')").run();
+}
+
+const sourceTierBackfilled = db.prepare("SELECT value FROM settings WHERE key = 'source_tier_backfilled'").get() as { value: string } | undefined;
+if (!sourceTierBackfilled) {
+  // Seed tiers from recorded history so dormancy applies to the current board list
+  // immediately, instead of waiting several fetches to rediscover what the logs know.
+  db.prepare(`
+    WITH recent_runs AS (
+      SELECT id FROM collection_runs WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 8
+    ),
+    outcomes AS (
+      SELECT source_id,
+        COUNT(*) AS checks,
+        SUM(CASE WHEN json_extract(details_json, '$.eligibleCount') > 0 THEN 1 ELSE 0 END) AS relevant_checks
+      FROM workflow_logs
+      WHERE step = 'source.complete'
+        AND source_id IS NOT NULL
+        AND run_id IN (SELECT id FROM recent_runs)
+      GROUP BY source_id
+    )
+    UPDATE job_sources SET
+      tier = CASE
+        WHEN COALESCE((SELECT relevant_checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0) > 0 THEN 'watchlist'
+        WHEN COALESCE((SELECT checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0) >= 3 THEN 'dormant'
+        ELSE 'standard'
+      END,
+      consecutive_zero_runs = CASE
+        WHEN COALESCE((SELECT relevant_checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0) > 0 THEN 0
+        ELSE COALESCE((SELECT checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0)
+      END,
+      -- Start the new schedule now rather than after one more full sweep, and spread the
+      -- quiet boards across their interval so they do not all come due in the same fetch.
+      cooldown_until = CASE
+        WHEN COALESCE((SELECT relevant_checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0) > 0 THEN cooldown_until
+        WHEN COALESCE((SELECT checks FROM outcomes WHERE outcomes.source_id = job_sources.id), 0) >= 3
+          THEN datetime('now', '+' || (abs(random()) % 10080) || ' minutes')
+        ELSE datetime('now', '+' || (abs(random()) % 1440) || ' minutes')
+      END,
+      tier_changed_at = CURRENT_TIMESTAMP
+  `).run();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('source_tier_backfilled', '1')").run();
 }
 
 const insertCompanyDiscoverySource = db.prepare(`
