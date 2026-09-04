@@ -4,6 +4,11 @@ Scout is a private job search app for one candidate. It collects jobs, scores ma
 
 Job discovery starts from the role, location, seniority, and experience saved during onboarding. Remotive, Jobicy, and Himalayas are built in and do not require an API key. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
 
+Boards are checked on a schedule that follows what they produce. A board that yields a
+relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and
+then a weekly check, and nothing is ever deleted, so a company that starts hiring again
+recovers on its own.
+
 Every fetched result is saved. Open the fetch result in Jobs to see which roles passed, which were filtered, and the reason for each decision.
 
 ## Requirements
@@ -33,7 +38,7 @@ The first visit opens candidate onboarding.
 | Applications | Track submitted applications, follow-ups, outcomes, and contact research in one place. |
 | Contact research | Find an evidence backed contact for a shortlisted role before you apply. Grouped by application stage. |
 | Target companies | Early company hiring momentum worth validating before contact research and outreach. |
-| Job sources | Choose where Scout looks. Public discovery feeds need no company names; add VC portfolios or company directories to widen official board coverage. |
+| Job sources | Choose where Scout looks. Public discovery feeds need no company names; add VC portfolios or company directories to widen official board coverage. Shows Exa credit warnings. |
 | Candidate profile | The single source of truth for matching and resume generation. |
 | Settings | Collection times, Ollama toggle, and related preferences. |
 | Workflow diagnostics | Per fetch step logs, timings, and counts for debugging a collection run. |
@@ -74,6 +79,27 @@ pnpm collect:gmail
 ## Contact research
 
 The Contact research page uses Hunter to find an evidence backed contact for a role. Set `HUNTER_API_KEY` to enable it. Scout tracks credit usage against a budget and shows the remaining allowance on the page. Without the key the page still lists opportunities, but cannot run a lookup.
+
+## Company discovery with Exa
+
+Scout uses [Exa](https://exa.ai) to find companies that are hiring for your role but are not
+yet on any board it tracks. Each fetch runs a small number of queries built from your saved
+titles and preferred location, skips companies it already follows, and inspects the rest for
+an official Greenhouse, Ashby, or Lever board.
+
+Set the key in `.env.local`, which is ignored by git:
+
+```text
+EXA_API_KEY=your-key-here
+```
+
+Exa reports the exact price of every request, so Scout keeps a running total rather than an
+estimate. The default budget is 10 dollars and can be changed with the `exa_budget_dollars`
+setting. Once spending passes 80 percent of it, the Job sources page shows a warning banner
+with the amount used, and Scout keeps searching. If Exa reports that the credits are gone,
+discovery pauses and the banner says so.
+
+Scout works without Exa. Company discovery is simply skipped when the key is missing.
 
 ## Automatic job collection
 

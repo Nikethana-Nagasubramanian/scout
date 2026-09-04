@@ -452,6 +452,20 @@ if (!hiringCafeSeeded) {
   db.prepare("INSERT INTO settings (key, value) VALUES ('hiring_cafe_source_seeded', '1')").run();
 }
 
+const hiringCafeRetired = db.prepare("SELECT value FROM settings WHERE key = 'hiring_cafe_retired'").get() as { value: string } | undefined;
+if (!hiringCafeRetired) {
+  // HiringCafe serves a Cloudflare managed challenge (403, cf-mitigated: challenge) to any
+  // non-browser request, so this source failed on every fetch. Scout does not work around
+  // bot protection. Exa discovery covers the same job of finding untracked companies.
+  db.prepare(`
+    UPDATE company_discovery_sources SET
+      enabled = 0,
+      last_error = 'Retired: HiringCafe returns a Cloudflare challenge (403) to programmatic requests. Company discovery now runs through Exa.'
+    WHERE url = ?
+  `).run(focusedHiringCafeUrl);
+  db.prepare("INSERT INTO settings (key, value) VALUES ('hiring_cafe_retired', '1')").run();
+}
+
 const sourceTierBackfilled = db.prepare("SELECT value FROM settings WHERE key = 'source_tier_backfilled'").get() as { value: string } | undefined;
 if (!sourceTierBackfilled) {
   // Seed tiers from recorded history so dormancy applies to the current board list

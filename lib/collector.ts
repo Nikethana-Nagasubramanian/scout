@@ -16,6 +16,12 @@ import {
   markGmailMessagesProcessed,
   parseHiringNewsletterSignals,
 } from "@/lib/gmail-alerts";
+import {
+  companyDiscoveryQueries,
+  exaBudgetStatus,
+  exaConfigured,
+  searchCompanies,
+} from "@/lib/exa-discovery";
 import { reconcileDuplicateJobs } from "@/lib/job-deduplication";
 import {
   assessJobEligibility,
@@ -827,6 +833,100 @@ async function discoverBoardsFromCompanyLink(
   }
   for (const board of boards.values()) persistDetectedBoard(company, board, discoveredVia);
   return [...boards.values()];
+}
+
+const MAX_EXA_COMPANIES_PER_RUN = 8;
+
+async function runExaCompanyDiscovery(runId: number, profile: CandidateProfile): Promise<number> {
+  const log: RequestLogger = (step, level, message, details, durationMs) => {
+    writeWorkflowLog(runId, null, step, level, message, details, durationMs);
+  };
+  if (!exaConfigured()) {
+    log("exa.skipped", "info", "Exa company discovery is off because EXA_API_KEY is not set.", {});
+    return 0;
+  }
+  const budgetBefore = exaBudgetStatus();
+  if (budgetBefore.state === "exhausted") {
+    log("exa.budget_exhausted", "warning", `Exa company discovery is paused. ${budgetBefore.exhaustedReason}`, {
+      spentDollars: budgetBefore.used,
+      budgetDollars: budgetBefore.budget,
+    });
+    return 0;
+  }
+
+  const startedAt = Date.now();
+  const queries = companyDiscoveryQueries(profile);
+  // Hosts already reachable through a tracked board are not worth paying to rediscover.
+  const knownHosts = new Set((db.prepare(
+    "SELECT discovered_from_url FROM job_sources WHERE discovered_from_url <> ''",
+  ).all() as Array<{ discovered_from_url: string }>).flatMap((row) => {
+    try {
+      return [new URL(row.discovered_from_url).hostname.replace(/^www\./, "")];
+    } catch {
+      return [];
+    }
+  }));
+
+  const candidates = new Map<string, { url: string; title: string }>();
+  let spent = 0;
+  let stoppedEarly = false;
+  for (const query of queries) {
+    const outcome = await searchCompanies(query);
+    spent += outcome.costDollars;
+    if (outcome.error) {
+      log(outcome.exhausted ? "exa.budget_exhausted" : "exa.search_failed", "warning", outcome.error, { query });
+      if (outcome.exhausted) {
+        stoppedEarly = true;
+        break;
+      }
+      continue;
+    }
+    for (const result of outcome.results) {
+      try {
+        const host = new URL(result.url).hostname.replace(/^www\./, "");
+        if (knownHosts.has(host) || candidates.has(host)) continue;
+        candidates.set(host, { url: result.url, title: result.title || host });
+      } catch {
+        continue;
+      }
+    }
+    log("exa.search_complete", "info", `Exa returned ${outcome.results.length} companies for "${query}".`, {
+      query,
+      results: outcome.results.length,
+      costDollars: outcome.costDollars,
+    });
+  }
+
+  const inspecting = [...candidates.values()].slice(0, MAX_EXA_COMPANIES_PER_RUN);
+  let boardsAdded = 0;
+  for (const candidate of inspecting) {
+    const boards = await discoverBoardsFromCompanyLink(candidate.title, candidate.url, log, {
+      name: "Exa company discovery",
+      url: candidate.url,
+    });
+    boardsAdded += boards.length;
+  }
+
+  const budgetAfter = exaBudgetStatus();
+  log(
+    "exa.discovery_complete",
+    budgetAfter.state === "ok" ? "success" : "warning",
+    `Exa discovery ran ${queries.length} ${queries.length === 1 ? "query" : "queries"}, found ${candidates.size} untracked companies, inspected ${inspecting.length}, and saved ${boardsAdded} official boards. Spent ${spent.toFixed(3)} dollars this run, ${budgetAfter.used.toFixed(2)} of ${budgetAfter.budget.toFixed(2)} total.`,
+    {
+      queries,
+      companiesFound: candidates.size,
+      companiesInspected: inspecting.length,
+      boardsAdded,
+      runCostDollars: Number(spent.toFixed(4)),
+      spentDollars: budgetAfter.used,
+      budgetDollars: budgetAfter.budget,
+      remainingDollars: budgetAfter.remaining,
+      budgetState: budgetAfter.state,
+      stoppedEarly,
+    },
+    Date.now() - startedAt,
+  );
+  return boardsAdded;
 }
 
 async function discoverBoardsFromRun(runId: number): Promise<number> {
@@ -2035,6 +2135,8 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
       );
     }
   });
+
+  if (!gmailOnly) await runExaCompanyDiscovery(runId, profile);
 
   const atsDiscoveryStartedAt = Date.now();
   writeWorkflowLog(

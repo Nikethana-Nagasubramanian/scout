@@ -11,6 +11,7 @@ import {
 import { EmptyState, PageHeader, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db, getSetting } from "@/lib/database";
+import { exaBudgetStatus, exaConfigured } from "@/lib/exa-discovery";
 import { gmailConfiguration } from "@/lib/gmail-alerts";
 import { broadDiscoverySearchTitles } from "@/lib/job-fit";
 import { focusedHiringCafeUrl } from "@/lib/source-presets";
@@ -50,6 +51,20 @@ function companyDiscoverySummaryText(summary: CompanyDiscoverySummary | undefine
     return `Latest check: ${directJobs}${summary.directBoardsFound} direct ATS links found, ${summary.boardsAdded} new boards saved. No company-site crawl was needed.`;
   }
   return `Latest check: ${summary.companiesInspected} company sites inspected, ${summary.boardsAdded} new boards saved.`;
+}
+
+function ExaBudgetNotice() {
+  const budget = exaBudgetStatus();
+  if (budget.state === "ok") return null;
+  const percent = Math.round(budget.fraction * 100);
+  return (
+    <p className="callout warning">
+      <strong>Exa credits: </strong>
+      {budget.state === "exhausted"
+        ? `${budget.exhaustedReason} Company discovery is paused until you add credit. Scout has spent ${budget.used.toFixed(2)} of your ${budget.budget.toFixed(2)} dollar budget.`
+        : `You have used ${budget.used.toFixed(2)} of your ${budget.budget.toFixed(2)} dollar budget (${percent} percent). Scout keeps searching until Exa reports the credits are gone.`}
+    </p>
+  );
 }
 
 export default function SourcesPage() {
@@ -108,6 +123,8 @@ export default function SourcesPage() {
       <PageHeader title="Job sources" description="Choose where Scout looks. You never need to enter companies for the public discovery feeds.">
         <form action={runWorkflowAction}><input type="hidden" name="slot" value="manual" /><WorkflowSubmitButton>Fetch new jobs</WorkflowSubmitButton></form>
       </PageHeader>
+
+      {exaConfigured() ? <ExaBudgetNotice /> : null}
 
       <section className="card fetch-explainer">
         <div className="card-header"><div><h2>What happens when you fetch</h2><p>One action, four visible steps</p></div></div>
