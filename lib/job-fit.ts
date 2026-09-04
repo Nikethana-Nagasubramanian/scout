@@ -92,6 +92,35 @@ const digitalDesignSignalPatterns = [
   /\b(?:product designer|design partner|cross-functional product team)\b/i,
 ];
 
+// Equal opportunity boilerplate mentions citizenship precisely to say it is not a barrier,
+// so a match inside that language means the opposite of a requirement.
+const equalOpportunityContextPattern = /\b(?:regardless of|without regard to|equal (?:employment )?opportunity|do not discriminate|protected (?:class|veteran)|affirmative action)\b/i;
+const citizenshipRequirementPattern = /\b(?:must be (?:a|an) (?:u\.?s\.?|us|united states) citizen|(?:u\.?s\.?|united states) citizenship (?:is )?required|requires? (?:u\.?s\.?|united states) citizenship|citizenship required|must be a citizen of the united states)\b/i;
+const clearanceRequirementPattern = /\b(?:security clearance|ts\/sci|top secret|dod secret|public trust clearance|itar|export control)\b/i;
+
+export type CitizenshipRequirement = "citizen_required" | "clearance" | "none";
+
+function requirementSentences(description: string): string[] {
+  // "U.S." carries periods that a sentence split would treat as boundaries, which used to cut
+  // "Must be a U.S. Citizen" in half and hide the requirement.
+  return description
+    .replace(/\bU\.\s?S\.(?:\s?A\.)?/gi, "US")
+    .split(/(?:\r?\n)+|(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Detects a citizenship or clearance requirement, ignoring the equal opportunity boilerplate
+ * that mentions citizenship only to say it is not held against an applicant.
+ */
+export function citizenshipRequirement(description: string): CitizenshipRequirement {
+  const sentences = requirementSentences(description).filter((sentence) => !equalOpportunityContextPattern.test(sentence));
+  if (sentences.some((sentence) => citizenshipRequirementPattern.test(sentence))) return "citizen_required";
+  if (sentences.some((sentence) => clearanceRequirementPattern.test(sentence))) return "clearance";
+  return "none";
+}
+
 export type RoleFamilyMatch = "match" | "possible" | "no";
 
 export function digitalDesignSignalCount(description: string): number {
@@ -272,6 +301,21 @@ export function assessJobEligibility(
     && /(no sponsorship|unable to sponsor|cannot sponsor|without sponsorship|not sponsor)/i.test(job.description)
   ) {
     filterReasons.push("The posting says sponsorship is unavailable.");
+  }
+
+  // Needing sponsorship and holding United States citizenship are mutually exclusive, so a
+  // citizen-only posting is a definite mismatch rather than something to check by hand.
+  const citizenship = citizenshipRequirement(job.description);
+  if (citizenship === "citizen_required") {
+    if (profile.sponsorship_required) {
+      filterReasons.push("The posting requires United States citizenship, which you cannot meet while you need sponsorship.");
+    } else {
+      verificationReasons.push("The posting requires United States citizenship. Confirm you hold it before applying.");
+    }
+  } else if (citizenship === "clearance") {
+    // A clearance in practice needs citizenship, but postings also list one as a nice to
+    // have, so this is raised for a decision rather than used to drop the role.
+    verificationReasons.push("The posting mentions a security clearance or export control requirement.");
   }
 
   return {

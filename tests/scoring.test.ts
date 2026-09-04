@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scoreJob, scorePostingConfidence } from "@/lib/scoring";
-import { assessJobEligibility, classifyRoleFamily, digitalDesignSignalCount } from "@/lib/job-fit";
+import { assessJobEligibility, citizenshipRequirement, classifyRoleFamily, digitalDesignSignalCount } from "@/lib/job-fit";
 import type { CandidateProfile, Job } from "@/lib/types";
 
 const profile: CandidateProfile = {
@@ -430,5 +430,60 @@ describe("role family classification", () => {
     );
     expect(assessment.status).toBe("needs_verification");
     expect(assessment.verificationReasons.join(" ")).toContain("reads like product design work");
+  });
+});
+
+describe("citizenship and clearance requirements", () => {
+  const sponsoredProfile = { ...profile, sponsorship_required: 1 };
+  const citizenProfile = { ...profile, sponsorship_required: 0 };
+  const preferences = { usaOnly: true, minimumExperience: 2, maximumExperience: 8, maximumAgeDays: 60 };
+  const base = {
+    title: "Product Designer",
+    location: "Mountain View, CA",
+    workplaceType: "onsite",
+    postedAt: new Date().toISOString(),
+  };
+
+  it("detects the requirement however the posting words it", () => {
+    expect(citizenshipRequirement("SECURITY REQUIREMENTS:\n - Must be a U.S. Citizen")).toBe("citizen_required");
+    expect(citizenshipRequirement("U.S. citizenship required.")).toBe("citizen_required");
+    expect(citizenshipRequirement("This role requires US citizenship.")).toBe("citizen_required");
+  });
+
+  it("does not read equal opportunity boilerplate as a requirement", () => {
+    expect(citizenshipRequirement(
+      "We consider all applicants without regard to race, religion, national origin, or citizenship status.",
+    )).toBe("none");
+    expect(citizenshipRequirement(
+      "We are an equal opportunity employer and do not discriminate on the basis of citizenship.",
+    )).toBe("none");
+  });
+
+  it("filters a citizen-only role when sponsorship is needed", () => {
+    const result = assessJobEligibility(
+      { ...base, description: "Design defense interfaces. SECURITY REQUIREMENTS: Must be a U.S. Citizen. Requires 3 to 5 years of experience." },
+      sponsoredProfile,
+      preferences,
+    );
+    expect(result.status).toBe("filtered");
+    expect(result.filterReasons.join(" ")).toContain("United States citizenship");
+  });
+
+  it("only asks for confirmation when sponsorship is not needed", () => {
+    const result = assessJobEligibility(
+      { ...base, description: "Design defense interfaces. U.S. citizenship required. Requires 3 to 5 years of experience." },
+      citizenProfile,
+      preferences,
+    );
+    expect(result.status).toBe("needs_verification");
+  });
+
+  it("raises a clearance mention for review rather than dropping the role", () => {
+    const result = assessJobEligibility(
+      { ...base, description: "Design tools for analysts. An active TS/SCI security clearance is nice to have. Requires 3 to 5 years of experience." },
+      sponsoredProfile,
+      preferences,
+    );
+    expect(result.status).toBe("needs_verification");
   });
 });

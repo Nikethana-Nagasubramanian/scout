@@ -49,7 +49,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const suggestions: ResumeBulletSuggestion[] = [];
   const failures: string[] = [];
-  for (const plan of plans) {
+  // Ollama serves these concurrently against one loaded model, so asking for the suggestions
+  // together costs about as much as the slowest one instead of the sum of all three.
+  const settled = await Promise.all(plans.map(async (plan) => {
     try {
       const suggestion = await suggestResumeBulletWithOllama(
         content,
@@ -59,18 +61,25 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         plan.target,
         plan.evidence,
       );
+      return { plan, suggestion, error: null as string | null };
+    } catch (error) {
+      return { plan, suggestion: null, error: error instanceof Error ? error.message : "A suggestion could not be generated" };
+    }
+  }));
+  for (const { plan, suggestion, error } of settled) {
+    if (suggestion) {
       if (suggestion.supported) suggestions.push({
         ...suggestion,
         blockId: plan.blockId,
         evidenceFactIds: plan.evidenceFactIds,
       });
-    } catch (error) {
-      const fallback = deterministicResumeSuggestion(content, plan.keyword, plan.target, plan.evidence);
-      if (fallback) {
-        suggestions.push({ ...fallback, blockId: plan.blockId, evidenceFactIds: plan.evidenceFactIds });
-      } else {
-        failures.push(error instanceof Error ? error.message : "A suggestion could not be generated");
-      }
+      continue;
+    }
+    const fallback = deterministicResumeSuggestion(content, plan.keyword, plan.target, plan.evidence);
+    if (fallback) {
+      suggestions.push({ ...fallback, blockId: plan.blockId, evidenceFactIds: plan.evidenceFactIds });
+    } else if (error) {
+      failures.push(error);
     }
   }
   return Response.json({ content, suggestions, failures });

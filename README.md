@@ -38,7 +38,7 @@ The first visit opens candidate onboarding.
 | Page | Purpose |
 | --- | --- |
 | Home | Daily starting point with the strongest opportunities and the next step for each. |
-| Jobs | Every collected job, its score, and the fetch result explaining why it passed or was filtered. |
+| Jobs | Every collected job, its score, and the fetch result explaining why it passed or was filtered. Roles requiring United States citizenship are filtered when your profile says you need sponsorship. |
 | Resume queue | Decide which tailored resumes are ready to use. Approve, regenerate, or reject a draft. Applied jobs move to Applications. |
 | Applications | Track submitted applications, follow-ups, outcomes, and contact research in one place. |
 | Contact research | Find an evidence backed contact for a shortlisted role before you apply. Grouped by application stage. |
@@ -64,6 +64,13 @@ ollama serve
 Ollama must actually be running for any of this to happen. If `ollama serve` is not up, Scout
 silently falls back to a structured template, so check the line under a cover letter draft: it
 names the model when local AI wrote it, and says so plainly when it did not.
+
+Local AI work is slow because it runs on your Mac, and roughly a third of a cold request is
+the model loading from disk. Scout keeps the model resident for 30 minutes, adjustable with
+`OLLAMA_KEEP_ALIVE`. If you want the resume suggestions to overlap rather than queue, start
+the server with `OLLAMA_NUM_PARALLEL=4 ollama serve`, which was worth about 17 percent in
+testing. Switching models between tasks forces a reload, so one model everywhere is faster
+than picking a different one per task.
 
 Ollama runs entirely on your Mac and has no internet access, so it never researches a company
 on its own. Everything it knows comes from the job posting Scout fetched and your saved

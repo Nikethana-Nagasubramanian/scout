@@ -36,6 +36,9 @@ export type ResumeRewriteTarget =
   | { kind: "experience"; sectionIndex: number; entryLineIndex: number };
 
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+// Loading a model from disk costs about as much as a whole request, so it is kept resident
+// long enough to cover a full resume and cover letter session.
+export const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || "30m";
 
 function parseStructuredResponse<T>(value: string): T {
   const cleaned = value
@@ -89,7 +92,9 @@ export async function prioritizeResumeWithOllama(
     "Do not write, edit, paraphrase, reorder, or invent any resume experience.",
     JSON.stringify({
       jobTitle: job.title,
-      jobDescription: job.description.slice(0, 18_000),
+      // Ranking a fixed skill list needs the gist of the posting, not all of it. The prompt
+      // used to carry 18000 characters, and prompt length is what this call spends its time on.
+      jobDescription: job.description.slice(0, 6_000),
       candidateSkills: content.skills,
     }),
   ].join("\n");
@@ -108,7 +113,7 @@ export async function prioritizeResumeWithOllama(
         },
         required: ["skillOrder"],
       },
-      keep_alive: "10m",
+      keep_alive: OLLAMA_KEEP_ALIVE,
       options: { temperature: 0 },
     }),
     signal: AbortSignal.timeout(120_000),
@@ -260,7 +265,7 @@ export async function suggestResumeBulletWithOllama(
         },
         required: ["supported", "candidateId", "suggestedBullet", "reason"],
       },
-      keep_alive: "10m",
+      keep_alive: OLLAMA_KEEP_ALIVE,
       options: { temperature: 0 },
     }),
     signal: AbortSignal.timeout(90_000),

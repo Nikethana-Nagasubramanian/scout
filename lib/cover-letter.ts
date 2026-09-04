@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { OLLAMA_KEEP_ALIVE } from "@/lib/local-ai";
 import type { Job, ResumeContent } from "@/lib/types";
 
 interface OllamaResponse {
@@ -322,7 +323,7 @@ async function requestLocalDraft(
           properties: { content: { type: "string" } },
           required: ["content"],
         },
-        keep_alive: "10m",
+        keep_alive: OLLAMA_KEEP_ALIVE,
         // A retry samples a little more freely, so a second attempt is not a rerun of the first.
         options: { temperature: attempt === 1 ? 0.35 : 0.55 },
       }),
