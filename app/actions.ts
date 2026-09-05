@@ -450,6 +450,27 @@ export async function createApplicationAction(formData: FormData): Promise<void>
   redirect("/applications");
 }
 
+/**
+ * Undoes a Mark applied. The application row and its history are kept, so this moves the
+ * record back into the active queue rather than deleting anything.
+ */
+export async function restoreApplicationToQueueAction(formData: FormData): Promise<void> {
+  const id = Number(text(formData, "id"));
+  if (!Number.isFinite(id)) return;
+  db.prepare(`
+    UPDATE applications SET
+      status = 'ready_to_apply',
+      applied_at = NULL,
+      follow_up_at = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', 'Restored to the resume queue')").run(id);
+  revalidatePath("/queue");
+  revalidatePath("/applications");
+  revalidatePath("/");
+}
+
 export async function quickUpdateApplicationAction(formData: FormData): Promise<void> {
   const id = Number(text(formData, "id"));
   const status = text(formData, "status");

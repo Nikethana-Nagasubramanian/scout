@@ -31,3 +31,21 @@ export function partitionResumeQueue<T extends ResumeQueueRow>(resumes: T[]) {
 
   return { pendingGroups, approvedGroups, rejectedGroups };
 }
+
+export type QueueState = "needs_review" | "applied" | "rejected";
+
+export interface QueueStateRow {
+  status: string;
+  application_status: string | null;
+}
+
+/**
+ * The three states a person actually thinks in. A rejected resume is a set-aside application,
+ * an applied one is finished, and everything else is still waiting on a decision. The stored
+ * status names are left alone; only the grouping is user-facing.
+ */
+export function queueState(row: QueueStateRow): QueueState {
+  if (row.status === "rejected") return "rejected";
+  if (row.application_status === "applied") return "applied";
+  return "needs_review";
+}

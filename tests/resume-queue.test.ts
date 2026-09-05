@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { coverLetterPdfFilename, resumePdfFilename } from "@/lib/resume-filename";
-import { partitionResumeQueue } from "@/lib/resume-queue";
+import { partitionResumeQueue, queueState } from "@/lib/resume-queue";
 
 describe("resumePdfFilename", () => {
   it("uses the candidate prefix and a safe company segment", () => {
@@ -54,5 +54,27 @@ describe("partitionResumeQueue", () => {
     ]);
 
     expect(queue.approvedGroups.map((group) => group[0].job_id)).toEqual([9]);
+  });
+});
+
+describe("queue state model", () => {
+  it("treats a rejected resume as rejected whatever the application says", () => {
+    expect(queueState({ status: "rejected", application_status: "ready_to_apply" })).toBe("rejected");
+    expect(queueState({ status: "rejected", application_status: null })).toBe("rejected");
+  });
+
+  it("treats an applied application as finished", () => {
+    expect(queueState({ status: "approved", application_status: "applied" })).toBe("applied");
+  });
+
+  it("leaves everything else waiting on a decision", () => {
+    expect(queueState({ status: "draft", application_status: null })).toBe("needs_review");
+    expect(queueState({ status: "approved", application_status: "ready_to_apply" })).toBe("needs_review");
+    expect(queueState({ status: "approved", application_status: "preparing" })).toBe("needs_review");
+  });
+
+  it("keeps a rejected application out of the applied tab", () => {
+    // A rejected resume on an applied job is history, not an active application.
+    expect(queueState({ status: "rejected", application_status: "applied" })).toBe("rejected");
   });
 });

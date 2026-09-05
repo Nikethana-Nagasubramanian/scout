@@ -4,7 +4,7 @@ import { coverLetterPdfFilename } from "@/lib/resume-filename";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const row = db.prepare(`
     SELECT cover_letters.content, cover_letters.updated_at, jobs.company,
@@ -41,7 +41,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `${new URL(request.url).searchParams.get("preview") === "1" ? "inline" : "attachment"}; filename="${filename}"`,
     },
   });
 }
