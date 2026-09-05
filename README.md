@@ -43,7 +43,7 @@ The first visit opens candidate onboarding.
 | Applications | Track submitted applications, follow-ups, outcomes, and contact research in one place. |
 | Contact research | Find an evidence backed contact for a shortlisted role before you apply. Grouped by application stage. |
 | Target companies | Early company hiring momentum worth validating before contact research and outreach. |
-| Job sources | Choose where Scout looks. Public discovery feeds need no company names; add VC portfolios or company directories to widen official board coverage. Shows Exa credit warnings. |
+| Job sources | Everywhere Scout looks and how often. Exa queries and remaining credit, the public feeds, your Gmail label, and every official board grouped by how often it is checked. Resting boards can be woken in bulk. |
 | Candidate profile | The single source of truth for matching and resume generation. |
 | Settings | Collection times, AI provider and model, and related preferences. |
 | Workflow diagnostics | Per fetch step logs, timings, and counts for debugging a collection run. |

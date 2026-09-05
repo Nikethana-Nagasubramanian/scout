@@ -1572,3 +1572,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
 @media (forced-colors: active) {
   select { appearance: auto; padding-right: 11px !important; background-image: none; }
 }
+
+.board-tier + .board-tier { margin-top: 18px; }
+.board-tier-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.board-tier-group { margin-top: 18px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: #fbfbfa; }
+.board-tier-group > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: #454945; }
+.board-tier-group[open] > summary { margin-bottom: 12px; }

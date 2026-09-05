@@ -205,6 +205,19 @@ export async function toggleSourceAction(formData: FormData): Promise<void> {
   revalidatePath("/sources");
 }
 
+/**
+ * Clears the rest period on every resting board so the next fetch checks all of them.
+ * Tier and yield history are untouched, so the boards settle back onto their schedule
+ * afterwards rather than being permanently promoted.
+ */
+export async function wakeRestingSourcesAction(): Promise<void> {
+  db.prepare(`
+    UPDATE job_sources SET cooldown_until = NULL
+    WHERE enabled = 1 AND tier <> 'watchlist' AND consecutive_failures = 0
+  `).run();
+  revalidatePath("/sources");
+}
+
 export async function deleteSourceAction(formData: FormData): Promise<void> {
   db.prepare("DELETE FROM job_sources WHERE id = ?").run(Number(text(formData, "id")));
   revalidatePath("/sources");

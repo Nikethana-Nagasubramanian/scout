@@ -7,6 +7,7 @@ import {
   runWorkflowAction,
   toggleCompanyDiscoverySourceAction,
   toggleSourceAction,
+  wakeRestingSourcesAction,
 } from "@/app/actions";
 import { EmptyState, PageHeader, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
@@ -14,26 +15,11 @@ import { db, getSetting } from "@/lib/database";
 import { exaBudgetStatus, exaConfigured } from "@/lib/exa-discovery";
 import { gmailConfiguration } from "@/lib/gmail-alerts";
 import { broadDiscoverySearchTitles } from "@/lib/job-fit";
-import { focusedHiringCafeUrl } from "@/lib/source-presets";
 import type { CandidateProfile, CompanyDiscoverySource, DiscoverySource, JobSource } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-interface RunRow {
-  id: number;
-  slot: string;
-  completed_at: string | null;
-  status: string;
-  jobs_found: number;
-  jobs_added: number;
-  jobs_updated: number;
-  error_summary: string;
-  eligible_jobs: number;
-  needs_verification_jobs: number;
-  filtered_jobs: number;
-  relevant_jobs: number;
-}
 
 interface CompanyDiscoverySummary {
   sourceId: number;
@@ -67,6 +53,85 @@ function ExaBudgetNotice() {
   );
 }
 
+function BoardTable({ rows, caption, now }: { rows: JobSource[]; caption: string; now: number }) {
+  if (!rows.length) return null;
+  return (
+    <div className="board-tier">
+      {caption ? <h3 className="board-tier-title">{caption} <span className="muted">({rows.length})</span></h3> : null}
+      <div className="table-wrap"><table><thead><tr><th>Company</th><th>Platform</th><th>Origin</th><th>Next request</th><th>Health</th><th /></tr></thead><tbody>
+        {rows.map((source) => {
+          const cooling = source.cooldown_until && new Date(source.cooldown_until).getTime() > now;
+          const status = !source.enabled ? "paused" : source.last_error ? "error" : cooling ? "cooldown" : source.last_success_at ? "healthy" : "ready";
+          return <tr key={source.id}>
+            <td><span className="job-title">{source.name}</span><span className="job-meta">{source.identifier}</span>{source.discovered_from_url ? <a className="job-meta text-link" href={source.discovered_from_url} target="_blank" rel="noreferrer">Detection evidence</a> : null}</td>
+            <td>{source.source_type}</td>
+            <td>
+              {source.auto_discovered ? "Automatic" : "Manual"}
+              {source.discovered_via_name ? <span className="job-meta">via {source.discovered_via_name}</span> : null}
+            </td>
+            <td>{cooling ? formatDateTime(source.cooldown_until) : "Ready now"}</td>
+            <td><StatusPill status={status} /></td>
+            <td><div className="inline-actions">
+              <form action={toggleSourceAction}><input type="hidden" name="id" value={source.id} /><button className="button ghost small" type="submit">{source.enabled ? "Pause" : "Enable"}</button></form>
+              <form action={deleteSourceAction}><input type="hidden" name="id" value={source.id} /><button className="button ghost small danger-text" type="submit">Remove</button></form>
+            </div></td>
+          </tr>;
+        })}
+      </tbody></table></div>
+    </div>
+  );
+}
+
+interface ExaQueryRowView {
+  id: number;
+  query: string;
+  kind: string;
+  last_run_at: string | null;
+  last_result_count: number;
+  consecutive_zero_runs: number;
+  minimum_interval_minutes: number;
+}
+
+function ExaSection({ queries, budget, configured }: {
+  queries: ExaQueryRowView[];
+  budget: ReturnType<typeof exaBudgetStatus>;
+  configured: boolean;
+}) {
+  return (
+    <section className="card">
+      <div className="card-header">
+        <div>
+          <h2>Exa company discovery</h2>
+          <p>Semantic searches that find companies hiring for your role before they appear anywhere else Scout looks.</p>
+        </div>
+        <div className="contact-budget">
+          <StatusPill status={configured ? (budget.state === "ok" ? "healthy" : budget.state) : "setup needed"} />
+          <strong>{configured
+            ? `${budget.remaining.toFixed(2)} of ${budget.budget.toFixed(2)} dollars left`
+            : "EXA_API_KEY is not set"}</strong>
+        </div>
+      </div>
+      {configured ? (
+        <div className="table-wrap"><table><thead><tr><th>Query</th><th>Scope</th><th>Last run</th><th>Found</th></tr></thead><tbody>
+          {queries.map((query) => (
+            <tr key={query.id}>
+              <td><span className="job-title">{query.query}</span></td>
+              <td>{query.kind === "ats_daily" ? "Daily, known ATS hosts" : "Weekly, open web"}</td>
+              <td>{query.last_run_at ? formatDateTime(query.last_run_at) : "Not yet run"}</td>
+              <td>
+                {query.last_result_count} new
+                {query.consecutive_zero_runs >= 3 ? <span className="job-meta">quiet for {query.consecutive_zero_runs} runs, slowing down</span> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody></table></div>
+      ) : (
+        <EmptyState title="Exa is not configured" body="Add EXA_API_KEY to your .env file to let Scout find companies that are not on any board it already tracks." />
+      )}
+    </section>
+  );
+}
+
 export default function SourcesPage() {
   const sources = db.prepare("SELECT * FROM job_sources ORDER BY name").all() as JobSource[];
   const companyDiscoverySources = db.prepare("SELECT * FROM company_discovery_sources ORDER BY name").all() as CompanyDiscoverySource[];
@@ -90,17 +155,25 @@ export default function SourcesPage() {
   }
   const profile = db.prepare("SELECT * FROM candidate_profile WHERE id = 1").get() as CandidateProfile;
   const targetTitles = broadDiscoverySearchTitles(profile);
-  const runs = db.prepare(`
-    SELECT collection_runs.*,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'eligible') AS eligible_jobs,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'needs_verification') AS needs_verification_jobs,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id AND classification = 'filtered') AS filtered_jobs,
-      (SELECT COUNT(*) FROM collection_job_results WHERE run_id = collection_runs.id) AS relevant_jobs
-    FROM collection_runs
-    ORDER BY id DESC
-    LIMIT 8
-  `).all() as RunRow[];
   const now = (db.prepare("SELECT unixepoch('now') AS value").get() as { value: number }).value * 1_000;
+  const tierOf = (source: JobSource) => {
+    const tier = source.tier || "standard";
+    return tier === "watchlist" || tier === "dormant" ? tier : "standard";
+  };
+  const enabledSources = sources.filter((source) => source.enabled);
+  const byTier = {
+    watchlist: enabledSources.filter((source) => tierOf(source) === "watchlist"),
+    standard: enabledSources.filter((source) => tierOf(source) === "standard"),
+    dormant: enabledSources.filter((source) => tierOf(source) === "dormant"),
+  };
+  const tierCounts = {
+    watchlist: byTier.watchlist.length,
+    standard: byTier.standard.length,
+    dormant: byTier.dormant.length,
+  };
+  const exaQueries = db.prepare("SELECT * FROM exa_queries WHERE enabled = 1 ORDER BY kind, id").all() as ExaQueryRowView[];
+  const exaBudget = exaBudgetStatus();
+  const exaReady = exaConfigured();
   const gmail = gmailConfiguration();
   const gmailState = db.prepare("SELECT * FROM gmail_alert_state WHERE id = 1").get() as {
     last_attempt_at: string | null;
@@ -120,20 +193,26 @@ export default function SourcesPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Job sources" description="Choose where Scout looks. You never need to enter companies for the public discovery feeds.">
+      <PageHeader title="Job sources" description="Everywhere Scout looks, and how often it looks there.">
         <form action={runWorkflowAction}><input type="hidden" name="slot" value="manual" /><WorkflowSubmitButton>Fetch new jobs</WorkflowSubmitButton></form>
       </PageHeader>
 
-      {exaConfigured() ? <ExaBudgetNotice /> : null}
+      {exaReady ? <ExaBudgetNotice /> : null}
+
+      <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} />
+
+      <div className="spacer" />
 
       <section className="card fetch-explainer">
-        <div className="card-header"><div><h2>What happens when you fetch</h2><p>One action, four visible steps</p></div></div>
+        <div className="card-header"><div><h2>What happens when you fetch</h2><p>One action, five visible steps</p></div></div>
         <div className="workflow-map-grid compact">
-          <div><span>1</span><strong>Check</strong><small>Scout calls only ready sources</small></div>
+          <div><span>1</span><strong>Check</strong><small>Feeds, your inbox, and only the boards whose rest period is up</small></div>
           <div><span>2</span><strong>Classify</strong><small>Eligible, needs verification, or filtered</small></div>
           <div><span>3</span><strong>Rank</strong><small>Profile match and posting signal are calculated</small></div>
-          <div><span>4</span><strong>Review</strong><small>You land in Jobs with a run summary</small></div>
+          <div><span>4</span><strong>Discover</strong><small>Exa looks for companies not yet on any board</small></div>
+          <div><span>5</span><strong>Review</strong><small>You land in Jobs with a run summary</small></div>
         </div>
+        <p className="callout">Boards found by discovery are read on the next fetch, not the one that found them.</p>
       </section>
 
       <div className="spacer" />
@@ -187,21 +266,7 @@ export default function SourcesPage() {
       </section>
 
       <div className="spacer" />
-      <section className="card">
-        <div className="card-header"><div><h2>Focused external searches</h2><p>Use these alongside Scout without account automation</p></div></div>
-        <div className="card-body two-column">
-          <div>
-            <h3>HiringCafe</h3>
-            <p className="muted">Open the focused 2 to 5 year Product Designer search. Confirm the United States location filter in HiringCafe before reviewing results.</p>
-            <a className="button secondary" href={focusedHiringCafeUrl} target="_blank" rel="noreferrer">Open focused HiringCafe search</a>
-          </div>
-          <div>
-            <h3>LinkedIn Jobs</h3>
-            <p className="muted">Use a saved LinkedIn search or alert. Scout does not scrape or automate a LinkedIn account. Import a promising posting from the Jobs page when needed.</p>
-            <a className="button secondary" href="https://www.linkedin.com/jobs/" target="_blank" rel="noreferrer">Open LinkedIn Jobs</a>
-          </div>
-        </div>
-      </section>
+      
 
       <div className="spacer" />
       <div className="two-column">
@@ -264,41 +329,31 @@ export default function SourcesPage() {
           <div className="card-header">
             <div>
               <h2>Official company boards</h2>
-              <p>{sources.filter((source) => source.enabled).length} saved Greenhouse, Ashby, or Lever feeds. A fetch requests each enabled feed only when its cooldown is ready. Scout does not open every career page in a browser.</p>
+              <p>{tierCounts.watchlist} checked every fetch, {tierCounts.standard} daily, {tierCounts.dormant} weekly. A board earns frequent checks by producing a role you can actually apply to, and slows down when it stays quiet. None are ever deleted.</p>
             </div>
+            {tierCounts.standard + tierCounts.dormant > 0 ? (
+              <form action={wakeRestingSourcesAction}>
+                <button className="button secondary small" type="submit">Wake all resting boards</button>
+              </form>
+            ) : null}
           </div>
           {sources.length ? (
-            <div className="table-wrap"><table><thead><tr><th>Company</th><th>Platform</th><th>Origin</th><th>Next request</th><th>Health</th><th /></tr></thead><tbody>
-              {sources.map((source) => {
-                const cooling = source.cooldown_until && new Date(source.cooldown_until).getTime() > now;
-                const status = !source.enabled ? "paused" : source.last_error ? "error" : cooling ? "cooldown" : source.last_success_at ? "healthy" : "ready";
-                return <tr key={source.id}>
-                  <td><span className="job-title">{source.name}</span><span className="job-meta">{source.identifier}</span>{source.discovered_from_url ? <a className="job-meta text-link" href={source.discovered_from_url} target="_blank" rel="noreferrer">Detection evidence</a> : null}</td>
-                  <td>{source.source_type}</td>
-                  <td>
-                    {source.auto_discovered ? "Automatic" : "Manual"}
-                    {source.discovered_via_name ? <span className="job-meta">via {source.discovered_via_name}</span> : null}
-                  </td>
-                  <td>{cooling ? formatDateTime(source.cooldown_until) : "Ready now"}</td>
-                  <td><StatusPill status={status} /></td>
-                  <td><div className="inline-actions">
-                    <form action={toggleSourceAction}><input type="hidden" name="id" value={source.id} /><button className="button ghost small" type="submit">{source.enabled ? "Pause" : "Enable"}</button></form>
-                    <form action={deleteSourceAction}><input type="hidden" name="id" value={source.id} /><button className="button ghost small danger-text" type="submit">Remove</button></form>
-                  </div></td>
-                </tr>;
-              })}
-            </tbody></table></div>
-          ) : <EmptyState title="No official boards detected yet" body="Scout will add Greenhouse and Ashby boards automatically when a matching job exposes one." />}
+            <div className="card-body stack">
+              <BoardTable rows={byTier.watchlist} caption="Checked every fetch" now={now} />
+              <BoardTable rows={byTier.standard} caption="Checked daily" now={now} />
+              {byTier.dormant.length ? (
+                <details className="board-tier-group">
+                  <summary>{byTier.dormant.length} resting boards, checked weekly</summary>
+                  <BoardTable rows={byTier.dormant} caption="" now={now} />
+                </details>
+              ) : null}
+            </div>
+          ) : <EmptyState title="No official boards detected yet" body="Scout adds Greenhouse, Ashby, and Lever boards automatically when Exa or a collected job exposes one." />}
         </section>
       </div>
 
       <div className="spacer" />
-      <section className="card">
-        <div className="card-header"><div><h2>Recent collection runs</h2><p>Feed failures remain visible and do not stop other sources.</p></div></div>
-        {runs.length ? <div className="table-wrap"><table><thead><tr><th>Run</th><th>Time</th><th>Result</th><th>Jobs</th><th>Notes</th></tr></thead><tbody>
-          {runs.map((run) => <tr key={run.id}><td><Link className="text-link" href={`/jobs?run=${run.id}`}>Fetch {run.id}</Link><span className="job-meta">{run.slot.replaceAll("_", " ")}</span></td><td>{formatDateTime(run.completed_at)}</td><td><StatusPill status={run.status} /></td><td>{run.relevant_jobs} relevant · {run.jobs_added} new · {run.jobs_updated} seen before · {run.eligible_jobs} eligible · {run.needs_verification_jobs} verify · {run.filtered_jobs} filtered</td><td className={run.error_summary ? "danger-text" : "muted"}>{run.error_summary || "No errors"}</td></tr>)}
-        </tbody></table></div> : <EmptyState title="No collection history" body="Fetch new jobs once to search from your profile." />}
-      </section>
+      
     </div>
   );
 }
