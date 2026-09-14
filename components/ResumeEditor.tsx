@@ -95,6 +95,7 @@ export function ResumeEditor({
   const [addingKeyword, setAddingKeyword] = useState<string | null>(null);
   const [keywordNotice, setKeywordNotice] = useState("");
   const [keywordSuggestion, setKeywordSuggestion] = useState<ResumeBulletSuggestion | null>(null);
+  const keywordCardRef = useRef<HTMLElement | null>(null);
   const [rewriteRequest, setRewriteRequest] = useState<RewriteRequest | null>(null);
   const [guidedSuggestions, setGuidedSuggestions] = useState<ResumeBulletSuggestion[]>([]);
   const [guidedDrafts, setGuidedDrafts] = useState<Record<string, string>>({});
@@ -105,6 +106,11 @@ export function ResumeEditor({
   const [refiningSuggestionId, setRefiningSuggestionId] = useState<string | null>(null);
   const requestedGuidance = useRef(false);
   const inspectorDraftRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Keep the rewrite picker or suggestion in view so Accept is reachable without scrolling.
+  useEffect(() => {
+    if (rewriteRequest || keywordSuggestion) keywordCardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [rewriteRequest?.keyword, keywordSuggestion]);
 
   useEffect(() => {
     if (requestedGuidance.current) return;
@@ -948,36 +954,8 @@ export function ResumeEditor({
             <div className="card-header"><div><h2>ATS keywords</h2><p>Job requirements compared with this resume</p></div><strong className="coverage-score">{coverage}%</strong></div>
             <div className="card-body">
               <div className="coverage-legend"><span className="coverage-key present">Present</span><span className="coverage-key partial">Partial</span><span className="coverage-key missing">Missing</span></div>
-              {keywordAnalysis.length ? (["missing", "partial", "present"] as const).map((status) => {
-                const items = keywordAnalysis.filter((item) => item.status === status);
-                if (!items.length) return null;
-                return (
-                  <section className="keyword-group" key={status}>
-                    <div className="keyword-group-heading"><strong>{status}</strong><span>{items.length}</span></div>
-                    <div className="keyword-grid">
-                      {items.map((item) => (
-                        <span className={`keyword-status ${item.status} ${item.status === "missing" ? "addable" : ""}`} key={item.keyword}>
-                          {item.keyword}
-                          {item.status === "missing" ? (
-                            <button
-                              type="button"
-                              className="keyword-add"
-                              onClick={() => beginKeywordRewrite(item.keyword)}
-                              disabled={addingKeyword !== null}
-                              aria-label={`Suggest a truthful resume rewrite for ${item.keyword}`}
-                              title={`Suggest a truthful resume rewrite for ${item.keyword}`}
-                            >
-                              {addingKeyword === item.keyword ? <span className="spinner" aria-hidden="true" /> : "+"}
-                            </button>
-                          ) : null}
-                        </span>
-                      ))}
-                    </div>
-                  </section>
-                );
-              }) : <span className="muted">Scout did not detect tracked requirements in this job description.</span>}
               {rewriteRequest ? (
-                <section className="keyword-suggestion rewrite-target-picker">
+                <section className="keyword-suggestion rewrite-target-picker" ref={keywordCardRef}>
                   <div className="keyword-suggestion-heading">
                     <span>
                       <strong>Where should Scout use {rewriteRequest.keyword}?</strong>
@@ -1010,7 +988,7 @@ export function ResumeEditor({
                 </section>
               ) : null}
               {keywordSuggestion ? (
-                <section className="keyword-suggestion" aria-live="polite">
+                <section className="keyword-suggestion" aria-live="polite" ref={keywordCardRef}>
                   <div className="keyword-suggestion-heading">
                     <span>
                       <strong>Suggested experience rewrite</strong>
@@ -1033,6 +1011,34 @@ export function ResumeEditor({
                   </button>
                 </section>
               ) : null}
+              {keywordAnalysis.length ? (["missing", "partial", "present"] as const).map((status) => {
+                const items = keywordAnalysis.filter((item) => item.status === status);
+                if (!items.length) return null;
+                return (
+                  <section className="keyword-group" key={status}>
+                    <div className="keyword-group-heading"><strong>{status}</strong><span>{items.length}</span></div>
+                    <div className="keyword-grid">
+                      {items.map((item) => (
+                        <span className={`keyword-status ${item.status} ${item.status === "missing" ? "addable" : ""}`} key={item.keyword}>
+                          {item.keyword}
+                          {item.status === "missing" ? (
+                            <button
+                              type="button"
+                              className="keyword-add"
+                              onClick={() => beginKeywordRewrite(item.keyword)}
+                              disabled={addingKeyword !== null}
+                              aria-label={`Suggest a truthful resume rewrite for ${item.keyword}`}
+                              title={`Suggest a truthful resume rewrite for ${item.keyword}`}
+                            >
+                              {addingKeyword === item.keyword ? <span className="spinner" aria-hidden="true" /> : "+"}
+                            </button>
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                );
+              }) : <span className="muted">Scout did not detect tracked requirements in this job description.</span>}
               {keywordNotice ? <p className="keyword-notice" role="status">{keywordNotice}</p> : null}
               <p className="muted coverage-note">Missing keywords are not added automatically. Use plus to choose the summary or a specific experience, then review the evidence-bound rewrite before accepting it.</p>
             </div>
