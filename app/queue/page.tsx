@@ -1,12 +1,12 @@
 import Link from "next/link";
 import {
-  createApplicationAction,
   generateResumeAction,
   restoreApplicationToQueueAction,
   updateResumeStatusAction,
 } from "@/app/actions";
 import { EmptyState, PageHeader, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
+import { QueueMarkAppliedButton, QueueRejectButton } from "@/components/QueueDecisionActions";
 import { db } from "@/lib/database";
 import { queueState, type QueueState } from "@/lib/resume-queue";
 import type { ResumeContent } from "@/lib/types";
@@ -15,7 +15,7 @@ import { formatDateTime, safeJson } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 const QUEUE_SEGMENTS = [
-  { value: "needs_review", label: "Needs review" },
+  { value: "needs_review", label: "Ready to apply" },
   { value: "applied", label: "Applied" },
   { value: "rejected", label: "Rejected" },
 ] as const;
@@ -102,7 +102,7 @@ function QueueCard({ resume, state }: { resume: QueueRow; state: QueueState }) {
   const content = safeJson<ResumeContent>(resume.content_json, emptyContent);
   const unsupported = content.audit?.unsupportedKeywords || [];
   const warning = generationWarning(resume.change_summary);
-  const statusLabel = state === "applied" ? "Applied" : state === "rejected" ? "Rejected" : "Needs review";
+  const statusLabel = state === "applied" ? "Applied" : state === "rejected" ? "Rejected" : "Ready to apply";
 
   return (
     <details className="queue-row">
@@ -151,11 +151,7 @@ function QueueCard({ resume, state }: { resume: QueueRow; state: QueueState }) {
         <div className="queue-decision">
           {state === "needs_review" ? (
             <>
-              <form action={createApplicationAction}>
-                <input type="hidden" name="job_id" value={resume.job_id} />
-                <input type="hidden" name="resume_id" value={resume.id} />
-                <button className="button queue-primary" type="submit">Mark applied</button>
-              </form>
+              <QueueMarkAppliedButton jobId={resume.job_id} resumeId={resume.id} />
               {resume.apply_url ? (
                 <a className="queue-utility" href={resume.apply_url} target="_blank" rel="noreferrer">Open application<span aria-hidden="true"> ↗</span></a>
               ) : null}
@@ -164,11 +160,7 @@ function QueueCard({ resume, state }: { resume: QueueRow; state: QueueState }) {
                 <input type="hidden" name="job_id" value={resume.job_id} />
                 <ResumeSubmitButton className="queue-utility queue-utility-button">Regenerate</ResumeSubmitButton>
               </form>
-              <form action={updateResumeStatusAction}>
-                <input type="hidden" name="id" value={resume.id} />
-                <input type="hidden" name="status" value="rejected" />
-                <button className="queue-utility queue-utility-button queue-reject" type="submit">Reject</button>
-              </form>
+              <QueueRejectButton resumeId={resume.id} />
             </>
           ) : null}
 

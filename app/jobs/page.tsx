@@ -373,9 +373,15 @@ export default async function JobsPage({ searchParams }: SearchProps) {
           <WorkflowSubmitButton sourceCount={resourceAudits.length}>Fetch new jobs</WorkflowSubmitButton>
         </form>
       </PageHeader>
+      <section className="jobs-search-snapshot" aria-label="Latest search snapshot">
+        <div><span>Last fetch</span><strong>{run ? formatDateTime(selectedHistoryRun?.completed_at || selectedHistoryRun?.started_at || "") : "No fetch yet"}</strong></div>
+        <div><span>New to review</span><strong>{selectedRunMetrics?.newJobs ?? 0}</strong></div>
+        <div><span>Search result</span><strong>{resultFoundCount} {resultFoundCount === 1 ? "role" : "roles"} across {resultSourceCount} {resultSourceCount === 1 ? "source" : "sources"}</strong></div>
+        <div className={run?.error_summary ? "has-issue" : ""}><span>Source health</span><strong>{run?.error_summary ? "Needs attention" : "All clear"}</strong></div>
+      </section>
       <section className="jobs-results-summary" aria-label="Job collection summary">
-        <h2>Scout found {jobs.length} {jobs.length === 1 ? "role" : "roles"} {segmentSummaryLabel}</h2>
-        <p>Scout found {resultFoundCount} {resultFoundCount === 1 ? "role" : "roles"} across {resultSourceCount} {resultSourceCount === 1 ? "source" : "sources"}</p>
+        <h2>{jobs.length} {jobs.length === 1 ? "role" : "roles"} {segmentSummaryLabel}</h2>
+        <p>Review the roles that match your search, then prepare the ones worth pursuing.</p>
       </section>
       <section className="card fetch-audit-card" aria-label="Recent fetches">
         <div className="fetch-audit-header">

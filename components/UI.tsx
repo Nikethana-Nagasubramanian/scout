@@ -73,7 +73,7 @@ export function StatusPill({ status }: { status: string }) {
     completed_with_errors: "Completed, source issue",
     completed_with_warnings: "Completed, cooldowns active",
     needs_verification: "Needs verification",
-    needs_review: "Needs review",
+    needs_review: "Ready to apply",
     preparing: "Preparing application",
     ready_to_apply: "Ready to apply",
     shortlisted: "Resume started",

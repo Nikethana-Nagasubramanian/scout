@@ -190,6 +190,8 @@ export default function SourcesPage() {
   `).get() as { total: number; explicit_roles: number | null; company_signals: number | null };
   const gmailCooling = Boolean(gmailState.cooldown_until && new Date(gmailState.cooldown_until).getTime() > now);
   const gmailStatus = !gmail.configured ? "setup needed" : gmailState.last_error ? "error" : gmailCooling ? "cooldown" : gmailState.last_success_at ? "healthy" : "ready";
+  const publicFeedIssues = discoverySources.filter((source) => source.last_error).length;
+  const boardIssues = sources.filter((source) => source.enabled && source.last_error).length;
 
   return (
     <div className="page">
@@ -197,26 +199,17 @@ export default function SourcesPage() {
         <form action={runWorkflowAction}><input type="hidden" name="slot" value="manual" /><WorkflowSubmitButton>Fetch new jobs</WorkflowSubmitButton></form>
       </PageHeader>
 
-      {exaReady ? <ExaBudgetNotice /> : null}
-
-      <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} />
-
-      <div className="spacer" />
-
-      <section className="card fetch-explainer">
-        <div className="card-header"><div><h2>What happens when you fetch</h2><p>One action, five visible steps</p></div></div>
-        <div className="workflow-map-grid compact">
-          <div><span>1</span><strong>Check</strong><small>Feeds, your inbox, and only the boards whose rest period is up</small></div>
-          <div><span>2</span><strong>Classify</strong><small>Eligible, needs verification, or filtered</small></div>
-          <div><span>3</span><strong>Rank</strong><small>Profile match and posting signal are calculated</small></div>
-          <div><span>4</span><strong>Discover</strong><small>Exa looks for companies not yet on any board</small></div>
-          <div><span>5</span><strong>Review</strong><small>You land in Jobs with a run summary</small></div>
-        </div>
-        <p className="callout">Boards found by discovery are read on the next fetch, not the one that found them.</p>
+      <section className="sources-health-grid" aria-label="Source health">
+        <div><span>Job alert inbox</span><strong>{gmailStatus}</strong><small>{gmailState.last_success_at ? `Last checked ${formatDateTime(gmailState.last_success_at)}` : "Needs its first check"}</small></div>
+        <div><span>Public feeds</span><strong>{publicFeedIssues ? `${publicFeedIssues} need attention` : "Healthy"}</strong><small>{discoverySources.length} feeds active</small></div>
+        <div><span>Company discovery</span><strong>{exaReady ? "Healthy" : "Setup needed"}</strong><small>{exaQueries.length} active Exa quer{exaQueries.length === 1 ? "y" : "ies"}</small></div>
+        <div><span>Official boards</span><strong>{boardIssues ? `${boardIssues} need attention` : "Healthy"}</strong><small>{enabledSources.length} boards active</small></div>
       </section>
 
-      <div className="spacer" />
-      <section className="card">
+      <div className="sources-sections">
+      <details className="source-section">
+        <summary><span><strong>Job alert inbox</strong><small>Alert emails and curated hiring newsletters</small></span><StatusPill status={gmailStatus} /></summary>
+        <section className="card">
         <div className="card-header">
           <div><h2>Job alert inbox</h2><p>BuiltIn, Indeed, Substack, and curated hiring newsletters from one Gmail label</p></div>
           <StatusPill status={gmailStatus} />
@@ -241,10 +234,12 @@ export default function SourcesPage() {
             </div>
           ) : null}
         </div>
-      </section>
+        </section>
+      </details>
 
-      <div className="spacer" />
-      <section className="card">
+      <details className="source-section">
+        <summary><span><strong>Public discovery feeds</strong><small>{discoverySources.length} broad job feeds matched to your search profile</small></span><StatusPill status={publicFeedIssues ? "error" : "healthy"} /></summary>
+        <section className="card">
         <div className="card-header"><div><h2>Automatic discovery feeds</h2><p>Scout searches these feeds using your target role, location, seniority, and experience profile.</p></div><StatusPill status="enabled" /></div>
         <div className="card-body">
           <p className="muted">When collection runs, Scout searches for Product Designer and UI/UX Designer across broad public services. Design Engineer stays limited to Gmail, imports, Greenhouse, Ashby, and direct sources where Scout can inspect the description and confirm digital product work.</p>
@@ -263,13 +258,15 @@ export default function SourcesPage() {
             </tr>;
           })}
         </tbody></table></div>
-      </section>
+        </section>
+      </details>
 
-      <div className="spacer" />
-      
-
-      <div className="spacer" />
-      <div className="two-column">
+      <details className="source-section">
+        <summary><span><strong>Company discovery</strong><small>{companyDiscoverySources.filter((source) => source.enabled).length} discovery pages and {exaQueries.length} semantic searches</small></span><StatusPill status={exaReady ? "healthy" : "setup needed"} /></summary>
+        <div className="source-section-body stack">
+        {exaReady ? <ExaBudgetNotice /> : null}
+        <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} />
+        <div className="two-column">
         <section className="card form-card">
           <div className="form-section">
             <h2>Company discovery pages</h2>
@@ -306,10 +303,13 @@ export default function SourcesPage() {
             </tbody></table></div>
           ) : <EmptyState title="No discovery pages yet" body="Add a VC portfolio or company directory when you want Scout to expand its official company coverage." />}
         </section>
-      </div>
+        </div>
+        </div>
+      </details>
 
-      <div className="spacer" />
-      <div className="two-column">
+      <details className="source-section">
+        <summary><span><strong>Official company boards</strong><small>{tierCounts.watchlist} checked every fetch, {tierCounts.standard} daily, {tierCounts.dormant} weekly</small></span><StatusPill status={boardIssues ? "error" : "healthy"} /></summary>
+        <div className="source-section-body two-column">
         <section className="card form-card">
           <div className="form-section">
             <h2>Add an official board manually</h2>
@@ -350,10 +350,9 @@ export default function SourcesPage() {
             </div>
           ) : <EmptyState title="No official boards detected yet" body="Scout adds Greenhouse, Ashby, and Lever boards automatically when Exa or a collected job exposes one." />}
         </section>
+        </div>
+      </details>
       </div>
-
-      <div className="spacer" />
-      
     </div>
   );
 }

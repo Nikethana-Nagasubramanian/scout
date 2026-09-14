@@ -880,7 +880,7 @@ export function ResumeEditor({
             </button>
           </div>
           {rightRailView === "suggestions" ? (
-            <section className="suggestion-inspector" data-stack-count={Math.min(3, guidedSuggestions.length)} aria-live="polite">
+            <section className={`suggestion-inspector${!guidedLoading && !activeSuggestion ? " is-empty" : ""}`} data-stack-count={Math.min(3, guidedSuggestions.length)} aria-live="polite">
               <div className="suggestion-inspector-inner">
                 <header className="suggestion-inspector-header">
                   <h2>Scout suggests {guidedSuggestions.length} {guidedSuggestions.length === 1 ? "edit" : "edits"}</h2>
@@ -897,32 +897,35 @@ export function ResumeEditor({
                   <div className="suggestion-inspector-empty"><span className="spinner" aria-hidden="true" /> Scout is finding defensible edits.</div>
                 ) : activeSuggestion ? (
                   <>
-                    <section className="inspector-comparison">
-                      <p className="inspector-label">Suggestion {effectiveSuggestionIndex + 1}</p>
-                      <div className="inspector-copy original"><span aria-hidden="true">•</span><p>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</p></div>
-                      <label className="inspector-copy proposed">
-                        <span aria-hidden="true">•</span>
-                        {refiningSuggestionId === activeSuggestionBlockId ? (
-                          <textarea
-                            ref={inspectorDraftRef}
-                            value={guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}
-                            onChange={(event) => setGuidedDrafts({ ...guidedDrafts, [activeSuggestionBlockId]: event.target.value })}
-                            aria-label={`Refine suggestion ${effectiveSuggestionIndex + 1}`}
-                          />
-                        ) : (
-                          <p>{guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}</p>
-                        )}
-                      </label>
-                    </section>
-                    <section className="inspector-note">
-                      <div className="inspector-meta-heading"><span className="inspector-note-icon" aria-hidden="true" /><h3>Scout&apos;s note</h3></div>
-                      <p>{activeSuggestion.reason}</p>
-                    </section>
-                    <section className="inspector-evidence">
-                      <div className="inspector-meta-heading"><span className="inspector-evidence-icon" aria-hidden="true" /><h3>Scout&apos;s evidence · {activeEvidenceCount} {activeEvidenceCount === 1 ? "source" : "sources"}</h3></div>
-                      <p>Confirmed in the resume evidence used for this job-specific edit.</p>
-                      <blockquote>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</blockquote>
-                    </section>
+                    <div className="suggestion-inspector-scroll">
+                      <section className="inspector-comparison">
+                        <p className="inspector-keyword">Keyword: {activeSuggestion.keyword}</p>
+                        <p className="inspector-label">Suggestion {effectiveSuggestionIndex + 1}</p>
+                        <div className="inspector-copy original"><span aria-hidden="true">•</span><p>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</p></div>
+                        <label className="inspector-copy proposed">
+                          <span aria-hidden="true">•</span>
+                          {refiningSuggestionId === activeSuggestionBlockId ? (
+                            <textarea
+                              ref={inspectorDraftRef}
+                              value={guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}
+                              onChange={(event) => setGuidedDrafts({ ...guidedDrafts, [activeSuggestionBlockId]: event.target.value })}
+                              aria-label={`Refine suggestion ${effectiveSuggestionIndex + 1}`}
+                            />
+                          ) : (
+                            <p>{guidedDrafts[activeSuggestionBlockId] || activeSuggestion.suggestedBullet}</p>
+                          )}
+                        </label>
+                      </section>
+                      <section className="inspector-note">
+                        <div className="inspector-meta-heading"><span className="inspector-note-icon" aria-hidden="true" /><h3>Scout&apos;s note</h3></div>
+                        <p>{activeSuggestion.reason}</p>
+                      </section>
+                      <section className="inspector-evidence">
+                        <div className="inspector-meta-heading"><span className="inspector-evidence-icon" aria-hidden="true" /><h3>Scout&apos;s evidence · {activeEvidenceCount} {activeEvidenceCount === 1 ? "source" : "sources"}</h3></div>
+                        <p>Confirmed in the resume evidence used for this job-specific edit.</p>
+                        <blockquote>{stripResumeBulletPrefix(activeSuggestion.originalBullet)}</blockquote>
+                      </section>
+                    </div>
                     <footer className="suggestion-inspector-actions">
                       <button type="button" className="inspector-action keep" onClick={() => keepOriginal(activeSuggestion)}>Keep original</button>
                       <button type="button" className="inspector-action refine" onClick={focusInspectorDraft}>Refine</button>

@@ -8,7 +8,6 @@ const groups = [
   {
     label: "Daily workflow",
     links: [
-      { href: "/", label: "Overview" },
       { href: "/sources", label: "Job sources" },
       { href: "/jobs", label: "Jobs" },
       { href: "/signals", label: "Target companies" },
@@ -38,7 +37,7 @@ export function Nav() {
 
   return (
     <aside className="sidebar">
-      <Link className="brand" href="/">
+      <Link className="brand" href="/jobs">
         <Image className="brand-mark" src="/brand/scout-mark-white-v1.png" width={30} height={30} alt="" aria-hidden="true" />
         <strong>Scout</strong>
       </Link>
@@ -48,7 +47,7 @@ export function Nav() {
             <p className="nav-group-label">{group.label}</p>
             <div className="nav-links">
               {group.links.map((link) => {
-                const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+                const active = pathname.startsWith(link.href);
                 return <Link className={active ? "nav-link active" : "nav-link"} href={link.href} key={link.href}>{link.label}</Link>;
               })}
             </div>

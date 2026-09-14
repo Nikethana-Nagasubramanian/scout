@@ -357,7 +357,6 @@ export async function updateResumeStatusAction(formData: FormData): Promise<void
   revalidatePath("/queue");
   revalidatePath("/applications");
   revalidatePath(`/resumes/${id}`);
-  redirect(status === "rejected" ? "/queue#rejected-resumes" : "/queue");
 }
 
 export async function saveResumeContentAction(formData: FormData): Promise<void> {
@@ -447,7 +446,6 @@ export async function createApplicationAction(formData: FormData): Promise<void>
   revalidatePath("/queue");
   revalidatePath(`/jobs/${jobId}`);
   if (resumeId) revalidatePath(`/resumes/${resumeId}`);
-  redirect("/applications");
 }
 
 /**
