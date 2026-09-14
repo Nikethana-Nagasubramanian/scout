@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
-import { db, setSetting } from "@/lib/database";
+import { db, setSetting, syncSearchSourcesToProfile } from "@/lib/database";
 import { DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
 import { clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
 import { searchContactForJob } from "@/lib/contact-research";
@@ -102,11 +102,13 @@ function persistProfile(formData: FormData): void {
 
 export async function saveProfileAction(formData: FormData): Promise<void> {
   persistProfile(formData);
+  syncSearchSourcesToProfile();
   clearEligibilityOverrides();
   scoreAllJobs();
   revalidatePath("/profile");
   revalidatePath("/jobs");
   revalidatePath("/queue");
+  revalidatePath("/sources");
 }
 
 export async function importResumeAction(formData: FormData): Promise<void> {
@@ -564,9 +566,11 @@ export async function saveSettingsAction(formData: FormData): Promise<void> {
   setSetting("ai_provider", provider === "anthropic" ? "anthropic" : "ollama");
   setSetting("anthropic_model", text(formData, "anthropic_model") || DEFAULT_ANTHROPIC_MODEL);
   clearEligibilityOverrides();
+  syncSearchSourcesToProfile();
   scoreAllJobs();
   revalidatePath("/settings");
   revalidatePath("/");
   revalidatePath("/jobs");
   revalidatePath("/queue");
+  revalidatePath("/sources");
 }

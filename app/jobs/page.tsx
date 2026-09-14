@@ -8,7 +8,7 @@ import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db } from "@/lib/database";
 import { buildFetchResourceAudit, type FetchResourceKey } from "@/lib/fetch-audit";
 import { jobNeedsFreshReview } from "@/lib/job-deduplication";
-import { isProductDesignRoleFamily } from "@/lib/job-fit";
+import { jobSearchTitles, matchesTargetRole } from "@/lib/job-fit";
 import type { Job, ScoreBreakdown, WorkflowLog } from "@/lib/types";
 import { formatDateTime, safeJson } from "@/lib/utils";
 import { requireProfile } from "@/lib/resume-import";
@@ -86,8 +86,8 @@ interface StrictRunMetrics {
   duplicates: number;
 }
 
-function strictRunMetrics(jobs: FetchHistoryJob[]): StrictRunMetrics {
-  const relevantJobs = jobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+function strictRunMetrics(jobs: FetchHistoryJob[], targetTitles: string[]): StrictRunMetrics {
+  const relevantJobs = jobs.filter((job) => matchesTargetRole(job.title, job.description, targetTitles));
   return {
     relevant: relevantJobs.length,
     newJobs: relevantJobs.filter(jobNeedsFreshReview).length,
@@ -163,6 +163,7 @@ interface JobListRow extends Job {
 
 export default async function JobsPage({ searchParams }: SearchProps) {
   requireProfile();
+  const targetTitles = jobSearchTitles(db.prepare("SELECT target_titles FROM candidate_profile WHERE id = 1").get() as { target_titles: string });
   const parameters = await searchParams;
   const query = parameters.q?.trim() || "";
   const requestedRunId = Number(parameters.run);
@@ -275,7 +276,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   `).all(run.id) as WorkflowLog[] : [];
   const resourceAudits = buildFetchResourceAudit(selectedRunLogs);
   const selectedRunRelevantJobs = run
-    ? (historyJobsStatement.all(run.id) as FetchHistoryJob[]).filter((job) => isProductDesignRoleFamily(job.title, job.description))
+    ? (historyJobsStatement.all(run.id) as FetchHistoryJob[]).filter((job) => matchesTargetRole(job.title, job.description, targetTitles))
     : [];
   const selectedSourceGroups = groupFetchHistoryJobs(selectedRunRelevantJobs);
   const auditedResourceGroups = new Map<FetchResourceKey, FetchSourceGroup[]>();
@@ -288,7 +289,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   const accountedResourceCount = resourceAudits.filter((resource) => resource.status !== "not_checked").length;
   const checkedResourceCount = resourceAudits.filter((resource) => ["complete", "partial", "failed"].includes(resource.status)).length;
   const coolingResourceCount = resourceAudits.filter((resource) => resource.status === "cooldown" || resource.skipped > 0).length;
-  const selectedRunMetrics = run ? strictRunMetrics(selectedRunRelevantJobs) : null;
+  const selectedRunMetrics = run ? strictRunMetrics(selectedRunRelevantJobs, targetTitles) : null;
   const selectedHistoryRun = run ? fetchHistory.find((historyRun) => historyRun.id === run.id) : undefined;
   const clauses: string[] = [];
   const values: Array<string | number> = [];
@@ -361,7 +362,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       first_seen_at DESC
   `).all(...(listRun ? [listRun.id, ...values] : values)) as JobListRow[];
   // Every count on the page comes from this one partition, so the headline and tabs always agree.
-  const relevantJobs = savedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+  const relevantJobs = savedJobs.filter((job) => matchesTargetRole(job.title, job.description, targetTitles));
   const segmentCounts: Record<FitSegment, number> = { all: 0, eligible: 0, needs_verification: 0, removed: 0 };
   for (const job of relevantJobs) {
     const segment = fitSegmentFor(job);

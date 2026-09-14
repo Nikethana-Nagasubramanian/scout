@@ -30,6 +30,7 @@ import {
   assessJobEligibility,
   broadDiscoverySearchTitles,
   classifyRoleFamily,
+  jobSearchTitles,
   type JobFitPreferences,
 } from "@/lib/job-fit";
 import { buildConfidenceSummary, buildMatchSummary, scoreJob, scorePostingConfidence } from "@/lib/scoring";
@@ -1552,7 +1553,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
           }
         });
         saveHiringSignals();
-        const roleFamilyJobs = fetched.jobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
+        const roleFamilyJobs = fetched.jobs.filter((job) => classifyRoleFamily(job.title, job.description, jobSearchTitles(profile)) !== "no");
         jobsFound += roleFamilyJobs.length;
         const {
           evaluatedJobs,
@@ -1719,7 +1720,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
 
     try {
       const fetchedJobs = await fetchDiscoverySource(source, profile, sourceLog);
-      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
+      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description, jobSearchTitles(profile)) !== "no");
       jobsFound += roleFamilyJobs.length;
       const {
         evaluatedJobs,
@@ -1880,7 +1881,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
     try {
       const discoveryResult = await runCompanyDiscoverySource(runId, source);
       if (discoveryResult.directJobs.length) {
-        const roleFamilyJobs = discoveryResult.directJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
+        const roleFamilyJobs = discoveryResult.directJobs.filter((job) => classifyRoleFamily(job.title, job.description, jobSearchTitles(profile)) !== "no");
         jobsFound += roleFamilyJobs.length;
         const {
           evaluatedJobs,
@@ -1960,7 +1961,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
           null,
           "portfolio.jobs_complete",
           "success",
-          `${source.name} returned ${discoveryResult.directJobs.length} direct jobs. ${roleFamilyJobs.length} matched the exact product design role family. Saved ${sourceAdded} new and refreshed ${sourceUpdated}. Classified ${eligibleCount} eligible, ${needsVerificationCount} for verification, and ${filteredCount} filtered.`,
+          `${source.name} returned ${discoveryResult.directJobs.length} direct jobs. ${roleFamilyJobs.length} matched your target roles. Saved ${sourceAdded} new and refreshed ${sourceUpdated}. Classified ${eligibleCount} eligible, ${needsVerificationCount} for verification, and ${filteredCount} filtered.`,
           {
             sourceId: source.id,
             sourceTypes: [...new Set(evaluatedJobs.map((evaluation) => evaluation.job.sourceType || "hiring_cafe"))],
@@ -2029,7 +2030,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
 
     try {
       const fetchedJobs = await fetchSource(source, sourceLog);
-      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description) !== "no");
+      const roleFamilyJobs = fetchedJobs.filter((job) => classifyRoleFamily(job.title, job.description, jobSearchTitles(profile)) !== "no");
       jobsFound += roleFamilyJobs.length;
       const {
         evaluatedJobs,
@@ -2135,7 +2136,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
         source.id,
         "source.complete",
         "success",
-        `${source.name} returned ${fetchedJobs.length} jobs. ${roleFamilyJobs.length} matched the exact product design role family. Saved ${sourceAdded} new and refreshed ${sourceUpdated}. Classified ${eligibleCount} eligible, ${needsVerificationCount} for verification, and ${filteredCount} filtered.`,
+        `${source.name} returned ${fetchedJobs.length} jobs. ${roleFamilyJobs.length} matched your target roles. Saved ${sourceAdded} new and refreshed ${sourceUpdated}. Classified ${eligibleCount} eligible, ${needsVerificationCount} for verification, and ${filteredCount} filtered.`,
         {
           jobsFound: fetchedJobs.length,
           roleFamilyJobs: roleFamilyJobs.length,

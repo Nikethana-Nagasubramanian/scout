@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scoreJob, scorePostingConfidence } from "@/lib/scoring";
-import { assessJobEligibility, citizenshipRequirement, classifyRoleFamily, digitalDesignSignalCount } from "@/lib/job-fit";
+import { assessJobEligibility, citizenshipRequirement, classifyRoleFamily, digitalDesignSignalCount, jobSearchTitles, unrequestedLeadershipWord } from "@/lib/job-fit";
 import type { CandidateProfile, Job } from "@/lib/types";
 
 const profile: CandidateProfile = {
@@ -231,7 +231,7 @@ describe("scoreJob", () => {
       preferred_locations: JSON.stringify(["United States"]),
     }, { usaOnly: true, minimumExperience: 2, maximumExperience: 5, maximumAgeDays: 60 });
     expect(result.eligibilityStatus).toBe("filtered");
-    expect(result.hardFilterReasons.join(" ")).toContain("digital Design Engineer");
+    expect(result.hardFilterReasons.join(" ")).toContain("does not match your target roles");
   });
 
   it("filters Apple hardware Product Design Engineer roles", () => {
@@ -485,5 +485,34 @@ describe("citizenship and clearance requirements", () => {
       preferences,
     );
     expect(result.status).toBe("needs_verification");
+  });
+});
+
+describe("target roles from the Search profile", () => {
+  const preferences = { usaOnly: false, minimumExperience: 0, maximumExperience: 50, maximumAgeDays: 60 };
+  const engineer = { ...profile, target_titles: JSON.stringify(["Software Engineer", "Backend Engineer"]), target_seniority: "mid" };
+
+  it("searches for the profile's target titles, not a fixed design list", () => {
+    expect(jobSearchTitles(engineer)).toEqual(["Software Engineer", "Backend Engineer"]);
+    expect(jobSearchTitles({ target_titles: "[]" })).toContain("Product Designer");
+  });
+
+  it("matches non-design roles on the words of the target titles", () => {
+    const targets = jobSearchTitles(engineer);
+    expect(classifyRoleFamily("Senior Software Engineer, Payments", "", targets)).toBe("match");
+    expect(classifyRoleFamily("Software Development Engineer", "", targets)).toBe("match");
+    expect(classifyRoleFamily("Data Engineer", "", targets)).toBe("possible");
+    expect(classifyRoleFamily("Account Executive", "", targets)).toBe("no");
+    expect(classifyRoleFamily("Product Designer", "Figma and design systems.", targets)).toBe("no");
+    expect(assessJobEligibility({ title: "Account Executive", location: "", description: "", workplaceType: "" }, engineer, preferences).filterReasons.join(" "))
+      .toContain("Software Engineer, Backend Engineer");
+  });
+
+  it("allows leadership words the user targets", () => {
+    const manager = { ...profile, target_titles: JSON.stringify(["Product Manager"]), target_seniority: "mid" };
+    expect(unrequestedLeadershipWord("Senior Product Manager", manager)).toBeNull();
+    expect(unrequestedLeadershipWord("Director of Product", manager)).toBe("director");
+    expect(assessJobEligibility({ title: "Product Manager, Growth", location: "", description: "", workplaceType: "" }, manager, preferences).status).toBe("eligible");
+    expect(unrequestedLeadershipWord("Staff Product Designer", profile)).toBe("staff");
   });
 });

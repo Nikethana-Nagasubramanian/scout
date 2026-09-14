@@ -30,7 +30,7 @@ export const vcDiscoverySources = [
 // Exa discovery runs a small fixed set of natural-language queries. Exa is a semantic search
 // engine, so these are written as plain descriptions of the wanted role rather than with
 // keyword operators. Domain filtering is a separate request parameter, not query syntax.
-export const exaQueryPresets = [
+export const exaQueryPresets: readonly ExaQueryPreset[] = [
   {
     query: "Currently open US Product Designer or Design Engineer roles at startups where designers build working prototypes using React, TypeScript, Claude Code, Cursor, or other AI coding tools.",
     kind: "ats_daily",
@@ -56,4 +56,36 @@ export const exaQueryPresets = [
     kind: "open_weekly",
     minimumIntervalMinutes: 10_080,
   },
-] as const;
+];
+
+export interface ExaQueryPreset {
+  query: string;
+  kind: "ats_daily" | "open_weekly";
+  minimumIntervalMinutes: number;
+}
+
+const seniorityPhrases: Record<string, string> = {
+  intern: "internship", junior: "junior or entry-level", mid: "mid-level", senior: "senior", staff: "staff-level", lead: "lead", manager: "manager-level",
+};
+
+/**
+ * Exa queries for a search that is not digital design. One daily query per target role
+ * (at most four) against the known ATS hosts, and one weekly open-web query across them all.
+ */
+export function generatedExaQueries(targetTitles: string[], seniority: string, usaOnly: boolean): ExaQueryPreset[] {
+  const region = usaOnly ? "US " : "";
+  const level = seniorityPhrases[seniority] ? ` for a ${seniorityPhrases[seniority]} candidate` : "";
+  const titles = targetTitles.slice(0, 4);
+  return [
+    ...titles.map((title) => ({
+      query: `Currently open ${region}${title} roles${level}.`,
+      kind: "ats_daily" as const,
+      minimumIntervalMinutes: 1_440,
+    })),
+    {
+      query: `${titles.join(", ")} openings at growing ${region}companies${level}. Return direct company career or application pages.`,
+      kind: "open_weekly" as const,
+      minimumIntervalMinutes: 10_080,
+    },
+  ];
+}

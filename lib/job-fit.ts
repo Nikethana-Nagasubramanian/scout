@@ -52,18 +52,30 @@ const hardwareDesignTitlePattern = /\b(?:mechanical|electrical|electronics|hardw
 const hardwareDesignDescriptionPattern = /\b(?:mechanical (?:architecture|design|engineering)|electrical engineering|circuit design|printed circuit|pcb|solidworks|autocad|catia|creo|pro\/?e|siemens nx|3d cad|cad drawings?|gd&t|geometric dimensioning|finite element|fea|manufacturing process|design for manufacturability|dfm|design for assembly|dfa|injection mold(?:ing)?|cnc|tooling|tolerance analysis|thermodynamics|mechanisms?|enclosure design|industrial design|consumer electronics|mass production|semiconductor|silicon validation|hvac)\b/i;
 const digitalDesignDescriptionPattern = /\b(?:user experience|user interface|ux|ui|figma|frontend|front-end|react|typescript|javascript|design systems?|web applications?|mobile applications?|interaction design|accessible interfaces?)\b/i;
 
+/** Used only when a profile has no target roles yet. */
 export const adjacentJobTitles = [
   "Product Designer",
   "UI/UX Designer",
   "Design Engineer",
 ];
 
-export function jobSearchTitles(profile: CandidateProfile): string[] {
-  void profile;
-  return adjacentJobTitles;
+/** The roles Scout searches for and filters against, straight from the Search profile. */
+export function jobSearchTitles(profile: Pick<CandidateProfile, "target_titles">): string[] {
+  const titles = parseList(profile.target_titles).map((title) => title.trim()).filter(Boolean);
+  return titles.length ? [...new Set(titles)] : adjacentJobTitles;
 }
 
-export function broadDiscoverySearchTitles(profile: CandidateProfile): string[] {
+const designTargetPattern = /\b(?:design(?:er|ers)?|ux|ui)\b/i;
+
+/**
+ * Digital design searches get the design-specific rules below (other disciplines, hardware,
+ * design-adjacent titles). Any other search is matched on the words of the target titles.
+ */
+export function targetsDesignRoles(targetTitles: string[]): boolean {
+  return targetTitles.some((title) => designTargetPattern.test(title) && !hardwareDesignTitlePattern.test(title));
+}
+
+export function broadDiscoverySearchTitles(profile: Pick<CandidateProfile, "target_titles">): string[] {
   const ambiguousEngineeringTitles = new Set(["design engineer", "product design engineer"]);
   return jobSearchTitles(profile).filter((title) => !ambiguousEngineeringTitles.has(normalizeText(title)));
 }
@@ -139,8 +151,13 @@ const designTitlePattern = /\bdesign(?:er|ers)?\b/i;
  * so its description decides. A title with no design word at all can still be kept for review
  * when the posting itself reads like product design work.
  */
-export function classifyRoleFamily(title: string, description = ""): RoleFamilyMatch {
-  if (hardwareDesignTitlePattern.test(title) || otherDesignDisciplinePattern.test(title)) return "no";
+export function classifyRoleFamily(title: string, description = "", targetTitles: string[] = adjacentJobTitles): RoleFamilyMatch {
+  if (!targetsDesignRoles(targetTitles)) return classifyByTargetTitles(title, targetTitles);
+
+  // A discipline the user explicitly targets (say, Brand Designer) is not excluded.
+  const targetsDiscipline = (pattern: RegExp) => targetTitles.some((target) => pattern.test(target));
+  if (hardwareDesignTitlePattern.test(title) && !targetsDiscipline(hardwareDesignTitlePattern)) return "no";
+  if (otherDesignDisciplinePattern.test(title) && !targetsDiscipline(otherDesignDisciplinePattern)) return "no";
 
   // "Design engineer" spans hardware and software, so it must show digital evidence. A vague
   // posting stays out rather than being waved through on the title.
@@ -156,11 +173,42 @@ export function classifyRoleFamily(title: string, description = ""): RoleFamilyM
   return digitalDesignSignalCount(description) >= 2 ? "possible" : "no";
 }
 
-export function isProductDesignRoleFamily(title: string, description = ""): boolean {
-  return classifyRoleFamily(title, description) === "match";
+/**
+ * Non-design searches: a title that contains every word of a target title matches, and one
+ * that shares at least half of a multi-word target is kept for review.
+ */
+function classifyByTargetTitles(title: string, targetTitles: string[]): RoleFamilyMatch {
+  let best = 0;
+  let bestTokenCount = 0;
+  for (const target of targetTitles) {
+    const ratio = titleMatchRatio(title, target);
+    if (ratio > best) {
+      best = ratio;
+      bestTokenCount = titleTokens(target).size;
+    }
+  }
+  if (best === 1) return "match";
+  return best >= 0.5 && bestTokenCount >= 2 ? "possible" : "no";
 }
 
-const excludedLeadershipPattern = /\b(?:staff|principal|lead|manager|director|head|vice president|vp)\b/i;
+export function matchesTargetRole(title: string, description = "", targetTitles: string[] = adjacentJobTitles): boolean {
+  return classifyRoleFamily(title, description, targetTitles) === "match";
+}
+
+export const isProductDesignRoleFamily = matchesTargetRole;
+
+const leadershipWords = ["staff", "principal", "lead", "manager", "director", "head", "vice president", "vp"];
+
+/** Leadership words the user did not ask for. Targeting "Product Manager" or a lead seniority allows that word. */
+export function unrequestedLeadershipWord(title: string, profile: Pick<CandidateProfile, "target_titles" | "target_seniority">): string | null {
+  const wanted = normalizeText(`${jobSearchTitles(profile).join(" ")} ${profile.target_seniority || ""}`);
+  for (const word of leadershipWords) {
+    const pattern = new RegExp(`\\b${word}\\b`, "i");
+    if (pattern.test(title) && !pattern.test(wanted)) return word;
+  }
+  return null;
+}
+
 const seniorPattern = /\b(?:senior|sr\.?)\b/i;
 
 function titleTokens(value: string): Set<string> {
@@ -253,13 +301,17 @@ export function assessJobEligibility(
 ): JobEligibilityAssessment {
   const filterReasons: string[] = [];
   const verificationReasons: string[] = [];
-  const roleFamily = classifyRoleFamily(job.title, job.description);
-  if (excludedLeadershipPattern.test(job.title)) {
+  const targetTitles = jobSearchTitles(profile);
+  const roleFamily = classifyRoleFamily(job.title, job.description, targetTitles);
+  const leadershipWord = unrequestedLeadershipWord(job.title, profile);
+  if (leadershipWord) {
     filterReasons.push("The title is a Lead, Staff, Principal, Manager, Director, or executive role.");
   } else if (roleFamily === "no") {
-    filterReasons.push("The title is not Product Designer, UI/UX Designer, or a digital Design Engineer role.");
+    filterReasons.push(`The title does not match your target roles: ${targetTitles.join(", ")}.`);
   } else if (roleFamily === "possible") {
-    verificationReasons.push("The title is not one Scout searches for, but the description reads like product design work.");
+    verificationReasons.push(targetsDesignRoles(targetTitles)
+      ? "The title is not one Scout searches for, but the description reads like product design work."
+      : "The title only partly matches your target roles, so check the description.");
   }
 
   const earlyCareerTitle = /\b(?:intern|internship|new grad)\b/i.test(job.title);
@@ -278,7 +330,7 @@ export function assessJobEligibility(
     seniorPattern.test(job.title)
     && requiredExperience.minimum === null
     && requiredExperience.maximum === null
-    && !excludedLeadershipPattern.test(job.title)
+    && !leadershipWord
   ) {
     verificationReasons.push("Senior title needs an experience check because the posting does not state a clear years requirement.");
   }

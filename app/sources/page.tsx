@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   addCompanyDiscoverySourceAction,
   addSourceAction,
@@ -11,11 +12,18 @@ import {
 import { EmptyState, PageHeader, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { db, getSetting } from "@/lib/database";
-import { exaBudgetStatus, exaConfigured } from "@/lib/exa-discovery";
+import { effectiveIntervalMinutes, exaBudgetStatus, exaConfigured } from "@/lib/exa-discovery";
 import { gmailConfiguration } from "@/lib/gmail-alerts";
-import { broadDiscoverySearchTitles } from "@/lib/job-fit";
+import { broadDiscoverySearchTitles, jobSearchTitles, targetsDesignRoles } from "@/lib/job-fit";
 import type { CandidateProfile, CompanyDiscoverySource, DiscoverySource, JobSource } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
+
+function intervalLabel(minutes: number): string {
+  if (minutes % 10_080 === 0) return minutes === 10_080 ? "weekly" : `every ${minutes / 10_080} weeks`;
+  if (minutes % 1_440 === 0) return minutes === 1_440 ? "daily" : `every ${minutes / 1_440} days`;
+  if (minutes % 60 === 0) return minutes === 60 ? "hourly" : `every ${minutes / 60} hours`;
+  return `every ${minutes} minutes`;
+}
 import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
@@ -92,17 +100,20 @@ interface ExaQueryRowView {
   minimum_interval_minutes: number;
 }
 
-function ExaSection({ queries, budget, configured }: {
+function ExaSection({ queries, budget, configured, generated }: {
   queries: ExaQueryRowView[];
   budget: ReturnType<typeof exaBudgetStatus>;
   configured: boolean;
+  generated: boolean;
 }) {
   return (
     <section className="card">
       <div className="card-header">
         <div>
           <h2>Exa company discovery</h2>
-          <p>Semantic searches that find companies hiring for your role before they appear anywhere else Scout looks.</p>
+          <p>{generated
+            ? "Generated from your target roles. Daily searches look only at Greenhouse, Ashby, and Lever postings from the last 30 days; the weekly search covers the open web."
+            : "Curated product design searches. Daily searches look only at Greenhouse, Ashby, and Lever postings from the last 30 days; the weekly search covers the open web."} Boards found in results are added to Official company boards.</p>
         </div>
         <div className="contact-budget">
           <StatusPill status={configured ? (budget.state === "ok" ? "healthy" : budget.state) : "setup needed"} />
@@ -112,15 +123,15 @@ function ExaSection({ queries, budget, configured }: {
         </div>
       </div>
       {configured ? (
-        <div className="table-wrap"><table><thead><tr><th>Query</th><th>Scope</th><th>Last run</th><th>Found</th></tr></thead><tbody>
+        <div className="table-wrap"><table><thead><tr><th>Query</th><th>Scope</th><th>Last run</th><th>Last result</th></tr></thead><tbody>
           {queries.map((query) => (
             <tr key={query.id}>
               <td><span className="job-title">{query.query}</span></td>
-              <td>{query.kind === "ats_daily" ? "Daily, known ATS hosts" : "Weekly, open web"}</td>
+              <td>{query.kind === "ats_daily" ? "ATS hosts" : "Open web"}, {intervalLabel(effectiveIntervalMinutes(query))}</td>
               <td>{query.last_run_at ? formatDateTime(query.last_run_at) : "Not yet run"}</td>
               <td>
-                {query.last_result_count} new
-                {query.consecutive_zero_runs >= 3 ? <span className="job-meta">quiet for {query.consecutive_zero_runs} runs, slowing down</span> : null}
+                {query.last_run_at ? `${query.last_result_count} results` : "Not yet run"}
+                {query.consecutive_zero_runs >= 3 ? <span className="job-meta">Empty {query.consecutive_zero_runs} runs in a row, so it now runs {intervalLabel(effectiveIntervalMinutes(query))}</span> : null}
               </td>
             </tr>
           ))}
@@ -155,13 +166,21 @@ export default function SourcesPage() {
     }
   }
   const profile = db.prepare("SELECT * FROM candidate_profile WHERE id = 1").get() as CandidateProfile;
+  const searchTitles = jobSearchTitles(profile);
   const targetTitles = broadDiscoverySearchTitles(profile);
+  const heldBackTitles = searchTitles.filter((title) => !targetTitles.includes(title));
+  const designSearch = targetsDesignRoles(searchTitles);
+  const usaOnly = getSetting("search_usa_only", "1") === "1";
+  const experienceMin = getSetting("search_experience_min", "2");
+  const experienceMax = getSetting("search_experience_max", "5");
+  const maxAgeDays = getSetting("search_max_age_days", "60");
   const now = (db.prepare("SELECT unixepoch('now') AS value").get() as { value: number }).value * 1_000;
   const tierOf = (source: JobSource) => {
     const tier = source.tier || "standard";
     return tier === "watchlist" || tier === "dormant" ? tier : "standard";
   };
   const enabledSources = sources.filter((source) => source.enabled);
+  const pausedSources = sources.filter((source) => !source.enabled);
   const byTier = {
     watchlist: enabledSources.filter((source) => tierOf(source) === "watchlist"),
     standard: enabledSources.filter((source) => tierOf(source) === "standard"),
@@ -193,6 +212,8 @@ export default function SourcesPage() {
   const gmailStatus = !gmail.configured ? "setup needed" : gmailState.last_error ? "error" : gmailCooling ? "cooldown" : gmailState.last_success_at ? "healthy" : "ready";
   const publicFeedIssues = discoverySources.filter((source) => source.last_error).length;
   const boardIssues = sources.filter((source) => source.enabled && source.last_error).length;
+  const discoveryPageIssues = companyDiscoverySources.filter((source) => source.enabled && source.last_error).length;
+  const companyDiscoveryStatus = !exaReady ? "setup needed" : exaBudget.state === "exhausted" ? "Credits exhausted" : discoveryPageIssues ? `${discoveryPageIssues} need attention` : "Healthy";
 
   return (
     <div className="page">
@@ -201,10 +222,25 @@ export default function SourcesPage() {
       </PageHeader>
 
       <section className="sources-health-grid" aria-label="Source health">
-        <div><span>Job alert inbox</span><strong>{gmailStatus}</strong><small>{gmailState.last_success_at ? `Last checked ${formatDateTime(gmailState.last_success_at)}` : "Needs its first check"}</small></div>
+        <div><span>Job alert inbox</span><strong>{gmailStatus}</strong><small>{!gmail.configured ? "SCOUT_GMAIL_* is not set" : gmailState.last_success_at ? `Last checked ${formatDateTime(gmailState.last_success_at)}` : "Needs its first check"}</small></div>
         <div><span>Public feeds</span><strong>{publicFeedIssues ? `${publicFeedIssues} need attention` : "Healthy"}</strong><small>{discoverySources.length} feeds active</small></div>
-        <div><span>Company discovery</span><strong>{exaReady ? "Healthy" : "Setup needed"}</strong><small>{exaQueries.length} active Exa quer{exaQueries.length === 1 ? "y" : "ies"}</small></div>
+        <div><span>Company discovery</span><strong>{companyDiscoveryStatus === "setup needed" ? "Exa not set up" : companyDiscoveryStatus}</strong><small>{exaQueries.length} Exa quer{exaQueries.length === 1 ? "y" : "ies"}, {companyDiscoverySources.filter((source) => source.enabled).length} discovery pages</small></div>
         <div><span>Official boards</span><strong>{boardIssues ? `${boardIssues} need attention` : "Healthy"}</strong><small>{enabledSources.length} boards active</small></div>
+      </section>
+
+      <section className="sources-search-rules" aria-label="What Scout searches for">
+        <div>
+          <span>Searching for</span>
+          <strong>{searchTitles.join(", ")}</strong>
+          <small>From your <Link className="text-link" href="/profile">Search profile</Link>. {designSearch
+            ? "Design rules apply: other design disciplines and hardware roles are filtered, and design-adjacent titles are kept for review when the description reads like product design."
+            : "A title matches when it contains every word of a target role, and is kept for review when it shares half of them."}</small>
+        </div>
+        <div>
+          <span>Filters</span>
+          <strong>{usaOnly ? "United States only" : "Any location"}, {experienceMin} to {experienceMax} years, posted within {maxAgeDays} days</strong>
+          <small>Change these on the <Link className="text-link" href="/settings">Automation</Link> page. Lead, staff, manager, and director titles are filtered unless your target roles or seniority include them.</small>
+        </div>
       </section>
 
       <div className="sources-sections">
@@ -238,12 +274,11 @@ export default function SourcesPage() {
       </details>
 
       <details className="source-section">
-        <summary><span><strong>Public discovery feeds</strong><small>{discoverySources.length} broad job feeds matched to your search profile</small></span><StatusPill status={publicFeedIssues ? "error" : "healthy"} /></summary>
+        <summary><span><strong>Public discovery feeds</strong><small>{discoverySources.length} remote job feeds, one role per request</small></span><StatusPill status={publicFeedIssues ? "error" : "healthy"} /></summary>
         <section className="card">
-        <div className="card-header"><div><h2>Automatic discovery feeds</h2><p>Scout searches these feeds using your target role, location, seniority, and experience profile.</p></div><StatusPill status="enabled" /></div>
+        <div className="card-header"><div><h2>Automatic discovery feeds</h2><p>Scout searches these feeds using your target role, location, seniority, and experience profile.</p></div><StatusPill status={publicFeedIssues ? "error" : "healthy"} /></div>
         <div className="card-body">
-          <p className="muted">When collection runs, Scout searches for Product Designer and UI/UX Designer across broad public services. Design Engineer stays limited to Gmail, imports, Greenhouse, Ashby, and direct sources where Scout can inspect the description and confirm digital product work.</p>
-          <div className="callout"><strong>Current rules:</strong> {getSetting("search_usa_only", "1") === "1" ? "United States only" : "All configured locations"}, {getSetting("search_experience_min", "2")} to {getSetting("search_experience_max", "5")} years, up to {getSetting("search_max_age_days", "60")} days old. Senior Product Designer passes when the posting asks for five years or less.</div>
+          <p className="muted">Each request searches one role, rotating through {targetTitles.join(", ")}. The table shows the role each feed asks for next. Results are then filtered against all of your target roles.{heldBackTitles.length ? ` ${heldBackTitles.join(", ")} ${heldBackTitles.length === 1 ? "is" : "are"} not sent to these feeds because the title is ambiguous between hardware and software; Scout only keeps it from sources where it can read the full description.` : ""}</p>
         </div>
         <div className="table-wrap"><table><thead><tr><th>Feed</th><th>Next role query</th><th>Rate policy</th><th>Next request</th><th>Health</th></tr></thead><tbody>
           {discoverySources.map((source) => {
@@ -262,15 +297,15 @@ export default function SourcesPage() {
       </details>
 
       <details className="source-section">
-        <summary><span><strong>Company discovery</strong><small>{companyDiscoverySources.filter((source) => source.enabled).length} discovery pages and {exaQueries.length} semantic searches</small></span><StatusPill status={exaReady ? "healthy" : "setup needed"} /></summary>
+        <summary><span><strong>Company discovery</strong><small>{companyDiscoverySources.filter((source) => source.enabled).length} discovery pages and {exaQueries.length} semantic searches</small></span><StatusPill status={!exaReady ? "setup needed" : exaBudget.state === "exhausted" || discoveryPageIssues ? "error" : "healthy"} /></summary>
         <div className="source-section-body stack">
         {exaReady ? <ExaBudgetNotice /> : null}
-        <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} />
+        <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} generated={!designSearch} />
         <div className="two-column">
         <section className="card form-card">
           <div className="form-section">
             <h2>Company discovery pages</h2>
-            <p>Add a VC portfolio or company directory once. Scout rotates through its company links and detects Greenhouse or Ashby career boards automatically.</p>
+            <p>Add a VC portfolio or company directory once. Once a day Scout reads it for Greenhouse, Ashby, and Lever links. For a plain company list it also visits the next 12 company sites to find their boards.</p>
             <form action={addCompanyDiscoverySourceAction}>
               <div className="form-grid">
                 <div className="field full"><label htmlFor="directory_name">Source name</label><input id="directory_name" name="name" required placeholder="Example Ventures portfolio" /></div>
@@ -308,7 +343,7 @@ export default function SourcesPage() {
       </details>
 
       <details className="source-section">
-        <summary><span><strong>Official company boards</strong><small>{tierCounts.watchlist} checked every fetch, {tierCounts.standard} daily, {tierCounts.dormant} weekly</small></span><StatusPill status={boardIssues ? "error" : "healthy"} /></summary>
+        <summary><span><strong>Official company boards</strong><small>{tierCounts.watchlist} hourly, {tierCounts.standard} daily, {tierCounts.dormant} weekly{pausedSources.length ? `, ${pausedSources.length} paused` : ""}</small></span><StatusPill status={boardIssues ? "error" : "healthy"} /></summary>
         <div className="source-section-body two-column">
         <section className="card form-card">
           <div className="form-section">
@@ -329,7 +364,7 @@ export default function SourcesPage() {
           <div className="card-header">
             <div>
               <h2>Official company boards</h2>
-              <p>{tierCounts.watchlist} checked every fetch, {tierCounts.standard} daily, {tierCounts.dormant} weekly. A board earns frequent checks by producing a role you can actually apply to, and slows down when it stays quiet. None are ever deleted.</p>
+              <p>{tierCounts.watchlist} hourly, {tierCounts.standard} daily, {tierCounts.dormant} weekly{pausedSources.length ? `, ${pausedSources.length} paused` : ""}. A board that produces an eligible role is checked hourly. After 3 checks with none it drops to daily, and after 8 to weekly. None are ever deleted.</p>
             </div>
             {tierCounts.standard + tierCounts.dormant > 0 ? (
               <form action={wakeRestingSourcesAction}>
@@ -339,12 +374,18 @@ export default function SourcesPage() {
           </div>
           {sources.length ? (
             <div className="card-body stack">
-              <BoardTable rows={byTier.watchlist} caption="Checked every fetch" now={now} />
+              <BoardTable rows={byTier.watchlist} caption="Checked hourly" now={now} />
               <BoardTable rows={byTier.standard} caption="Checked daily" now={now} />
               {byTier.dormant.length ? (
                 <details className="board-tier-group">
                   <summary>{byTier.dormant.length} resting boards, checked weekly</summary>
                   <BoardTable rows={byTier.dormant} caption="" now={now} />
+                </details>
+              ) : null}
+              {pausedSources.length ? (
+                <details className="board-tier-group">
+                  <summary>{pausedSources.length} paused boards, never checked until enabled</summary>
+                  <BoardTable rows={pausedSources} caption="" now={now} />
                 </details>
               ) : null}
             </div>

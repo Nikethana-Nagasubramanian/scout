@@ -1724,3 +1724,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
 .profile-import-notice.issue { border-color: #e7c3b8; color: #b94e38; background: #faeee9; }
 .profile-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .profile-page .profile-upload-row input[type="file"] { flex: 1 1 220px; min-width: 0; padding: 6px; font-size: 13px; }
+.sources-search-rules { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: 0 0 22px; overflow: hidden; border: 1px solid #dcdcdc; border-radius: 9px; background: #fff; }
+.sources-search-rules > div { display: grid; align-content: start; gap: 4px; padding: 16px; border-right: 1px solid #dcdcdc; }
+.sources-search-rules > div:last-child { border-right: 0; }
+.sources-search-rules span { color: #6e6368; font-size: var(--text-meta); line-height: var(--line-meta); }
+.sources-search-rules strong { color: #000; font-size: var(--text-body); font-weight: 600; line-height: var(--line-body); }
+.sources-search-rules small { color: #6e6368; font-size: var(--text-meta); line-height: 18px; }
+@media (max-width: 720px) {
+  .sources-search-rules { grid-template-columns: 1fr; }
+  .sources-search-rules > div { border-right: 0; border-bottom: 1px solid #dcdcdc; }
+  .sources-search-rules > div:last-child { border-bottom: 0; }
+}

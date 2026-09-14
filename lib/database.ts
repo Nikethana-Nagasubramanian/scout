@@ -1,7 +1,9 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { exaQueryPresets, focusedHiringCafeUrl, vcDiscoverySources } from "@/lib/source-presets";
+import { jobSearchTitles, targetsDesignRoles } from "@/lib/job-fit";
+import { exaQueryPresets, focusedHiringCafeUrl, generatedExaQueries, vcDiscoverySources } from "@/lib/source-presets";
+import type { CandidateProfile } from "@/lib/types";
 
 const databasePath = join(process.cwd(), "data", "job-copilot.sqlite");
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -466,15 +468,6 @@ if (!hiringCafeSeeded) {
   db.prepare("INSERT INTO settings (key, value) VALUES ('hiring_cafe_source_seeded', '1')").run();
 }
 
-const insertExaQuery = db.prepare(`
-  INSERT INTO exa_queries (query, kind, minimum_interval_minutes)
-  VALUES (?, ?, ?)
-  ON CONFLICT(query) DO NOTHING
-`);
-const seedExaQueries = db.transaction(() => {
-  for (const entry of exaQueryPresets) insertExaQuery.run(entry.query, entry.kind, entry.minimumIntervalMinutes);
-});
-seedExaQueries();
 
 const hiringCafeRetired = db.prepare("SELECT value FROM settings WHERE key = 'hiring_cafe_retired'").get() as { value: string } | undefined;
 if (!hiringCafeRetired) {
@@ -537,8 +530,7 @@ const insertCompanyDiscoverySource = db.prepare(`
   ON CONFLICT(url) DO UPDATE SET
     name = excluded.name,
     include_companies = excluded.include_companies,
-    exclude_companies = excluded.exclude_companies,
-    enabled = 1
+    exclude_companies = excluded.exclude_companies
 `);
 const seedVcDiscoverySources = db.transaction(() => {
   for (const source of vcDiscoverySources) {
@@ -551,6 +543,37 @@ const seedVcDiscoverySources = db.transaction(() => {
   }
 });
 seedVcDiscoverySources();
+
+const presetPauseReason = "Paused: this preset only lists design jobs, and your target roles are not design roles.";
+
+/**
+ * Keeps search sources in line with the Search profile. Design searches use the curated Exa
+ * queries and design-filtered discovery pages. Any other search gets Exa queries generated
+ * from its target roles, and the design-only pages are paused with the reason shown.
+ */
+export function syncSearchSourcesToProfile(): void {
+  const profile = db.prepare("SELECT target_titles, target_seniority FROM candidate_profile WHERE id = 1").get() as Pick<CandidateProfile, "target_titles" | "target_seniority">;
+  const titles = jobSearchTitles(profile);
+  const design = targetsDesignRoles(titles);
+  const desired = design
+    ? exaQueryPresets
+    : generatedExaQueries(titles, profile.target_seniority, getSetting("search_usa_only", "1") === "1");
+  const upsert = db.prepare(`
+    INSERT INTO exa_queries (query, kind, minimum_interval_minutes, enabled) VALUES (?, ?, ?, 1)
+    ON CONFLICT(query) DO UPDATE SET enabled = 1, kind = excluded.kind, minimum_interval_minutes = excluded.minimum_interval_minutes
+  `);
+  db.transaction(() => {
+    db.prepare("UPDATE exa_queries SET enabled = 0").run();
+    for (const entry of desired) upsert.run(entry.query, entry.kind, entry.minimumIntervalMinutes);
+    for (const source of vcDiscoverySources) {
+      if (design) {
+        db.prepare("UPDATE company_discovery_sources SET enabled = 1, last_error = '' WHERE url = ? AND last_error = ?").run(source.url, presetPauseReason);
+      } else {
+        db.prepare("UPDATE company_discovery_sources SET enabled = 0, last_error = ? WHERE url = ? AND enabled = 1").run(presetPauseReason, source.url);
+      }
+    }
+  })();
+}
 
 export function getSetting(key: string, fallback = ""): string {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
@@ -566,3 +589,5 @@ export function setSetting(key: string, value: string): void {
 export function getDatabasePath(): string {
   return databasePath;
 }
+
+syncSearchSourcesToProfile();

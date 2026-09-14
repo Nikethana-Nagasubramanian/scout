@@ -78,7 +78,7 @@ If `ollama serve` is not running, Scout silently falls back to the template, so 
 
 Discovery starts from the role, location, seniority, and experience in your Search profile. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
 
-A job is kept when its title is one Scout searches for. When the title is unusual but the description reads like product design work, the job is kept for review rather than dropped, so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design disciplines, hardware roles, and leadership titles are filtered out.
+Scout searches for the target roles in your Search profile. A job matches when its title contains every word of a target role, and is kept for review when it shares half of them. For design searches, a stricter set of rules applies. When the title is unusual but the description reads like product design work, the job is kept for review rather than dropped, so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design disciplines, hardware roles, and leadership titles are filtered out.
 
 Boards are checked on a schedule that follows what they produce. A board that yields a relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and then a weekly check, and nothing is ever deleted, so a company that starts hiring again recovers on its own.
 
@@ -148,7 +148,7 @@ never asks Exa to judge fit: scoring happens afterwards against the full job tex
 are deduplicated by canonical URL before anything is fetched, and a query that keeps
 returning nothing is run less often rather than deleted.
 
-Edit the queries in `lib/source-presets.ts`, or the `exa_queries` table to change cadence.
+The queries follow your target roles. Product design searches use the curated queries in `lib/source-presets.ts`; any other search gets one daily query per target role plus a weekly open-web query, regenerated whenever you save the Search profile or Automation settings. The design-only discovery pages are paused for non-design searches.
 
 Set the key in `.env`:
 

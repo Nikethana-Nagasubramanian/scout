@@ -115,3 +115,15 @@ describe("company names from board identifiers", () => {
     expect(companyNameFromIdentifier("--")).toBe("");
   });
 });
+
+describe("generatedExaQueries", () => {
+  it("builds one daily ATS query per target role and one weekly open-web query", async () => {
+    const { generatedExaQueries } = await import("@/lib/source-presets");
+    const queries = generatedExaQueries(["Software Engineer", "Data Engineer"], "mid", true);
+    expect(queries.filter((query) => query.kind === "ats_daily").map((query) => query.query)).toEqual([
+      "Currently open US Software Engineer roles for a mid-level candidate.",
+      "Currently open US Data Engineer roles for a mid-level candidate.",
+    ]);
+    expect(queries.at(-1)).toMatchObject({ kind: "open_weekly", minimumIntervalMinutes: 10_080 });
+  });
+});
