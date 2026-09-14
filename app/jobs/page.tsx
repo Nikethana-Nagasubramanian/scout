@@ -18,12 +18,22 @@ interface SearchProps {
   searchParams: Promise<{ q?: string; fit?: string; run?: string; source?: string }>;
 }
 
-const FIT_SEGMENTS = [
+type FitSegment = "all" | "eligible" | "needs_verification" | "removed";
+
+const FIT_SEGMENTS: ReadonlyArray<{ value: FitSegment; label: string }> = [
   { value: "all", label: "All roles" },
   { value: "eligible", label: "Eligible" },
   { value: "needs_verification", label: "Needs verification" },
   { value: "removed", label: "Removed" },
-] as const;
+];
+
+/** "All roles" means every role still worth a decision, so removed roles live only under Removed. */
+function fitSegmentFor(job: Pick<Job, "eligibility_status" | "status">): Exclude<FitSegment, "all"> {
+  if (job.eligibility_status === "filtered" || ["irrelevant", "dismissed"].includes(job.status)) return "removed";
+  return job.eligibility_status === "needs_verification" ? "needs_verification" : "eligible";
+}
+
+const JOB_LIST_LIMIT = 250;
 
 interface RunSummary {
   id: number;
@@ -176,7 +186,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       `).get(runId) as RunSummary | undefined
     : undefined;
   const listRun = query ? undefined : run;
-  const fit = query ? "all" : parameters.fit || "eligible";
+  const fit: FitSegment = FIT_SEGMENTS.some((segment) => segment.value === parameters.fit) ? parameters.fit as FitSegment : "all";
   const source = parameters.source || "all";
   const fetchHistory = db.prepare(`
     SELECT collection_runs.id, collection_runs.slot, collection_runs.started_at,
@@ -278,9 +288,6 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   const coolingResourceCount = resourceAudits.filter((resource) => resource.status === "cooldown" || resource.skipped > 0).length;
   const selectedRunMetrics = run ? strictRunMetrics(selectedRunRelevantJobs) : null;
   const selectedHistoryRun = run ? fetchHistory.find((historyRun) => historyRun.id === run.id) : undefined;
-  const duplicateCount = selectedRunMetrics
-    ? selectedRunMetrics.duplicates
-    : (db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE duplicate_of_job_id IS NOT NULL").get() as { count: number }).count;
   const clauses: string[] = [];
   const values: Array<string | number> = [];
 
@@ -288,18 +295,12 @@ export default async function JobsPage({ searchParams }: SearchProps) {
     clauses.push("(title LIKE ? OR company LIKE ? OR description LIKE ?)");
     values.push(`%${query}%`, `%${query}%`, `%${query}%`);
   }
-  if (fit === "duplicates") {
-    clauses.push("jobs.duplicate_of_job_id IS NOT NULL");
-  } else {
-    clauses.push("jobs.duplicate_of_job_id IS NULL");
-    // Once an application is queued (or further along) the job has graduated out of the
-    // Jobs decision queue and lives in Applications instead - "preparing" (resume/cover
-    // letter still in progress) is the only in-flight application status still shown here.
-    clauses.push("NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id AND applications.status != 'preparing')");
-    if (fit === "eligible") clauses.push("eligibility_status = 'eligible'");
-    else if (fit === "needs_verification") clauses.push("eligibility_status = 'needs_verification'");
-    else if (fit === "removed") clauses.push("(eligibility_status = 'filtered' OR jobs.status IN ('irrelevant', 'dismissed'))");
-  }
+  // Duplicates are hidden everywhere: the original posting is the one worth deciding on.
+  clauses.push("jobs.duplicate_of_job_id IS NULL");
+  // Once an application is queued (or further along) the job has graduated out of the
+  // Jobs decision queue and lives in Applications instead - "preparing" (resume/cover
+  // letter still in progress) is the only in-flight application status still shown here.
+  clauses.push("NOT EXISTS (SELECT 1 FROM applications WHERE applications.job_id = jobs.id AND applications.status != 'preparing')");
   if (source === "greenhouse" || source === "ashby" || source === "manual" || source === "hiring_cafe") {
     clauses.push("source_type = ?");
     values.push(source);
@@ -352,16 +353,30 @@ export default async function JobsPage({ searchParams }: SearchProps) {
     LEFT JOIN job_sources AS source_metadata ON source_metadata.id = jobs.source_id
     ${where}
     ORDER BY
-      CASE eligibility_status WHEN 'needs_verification' THEN 0 WHEN 'eligible' THEN 1 ELSE 2 END,
+      CASE eligibility_status WHEN 'eligible' THEN 0 WHEN 'needs_verification' THEN 1 ELSE 2 END,
       CASE WHEN run_outcome = 'new' THEN 0 ELSE 1 END,
       score DESC,
       first_seen_at DESC
-    LIMIT 250
   `).all(...(listRun ? [listRun.id, ...values] : values)) as JobListRow[];
-  const jobs = savedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
-  const resultFoundCount = selectedRunMetrics?.relevant ?? jobs.length;
+  // Every count on the page comes from this one partition, so the headline and tabs always agree.
+  const relevantJobs = savedJobs.filter((job) => isProductDesignRoleFamily(job.title, job.description));
+  const segmentCounts: Record<FitSegment, number> = { all: 0, eligible: 0, needs_verification: 0, removed: 0 };
+  for (const job of relevantJobs) {
+    const segment = fitSegmentFor(job);
+    segmentCounts[segment] += 1;
+    if (segment !== "removed") segmentCounts.all += 1;
+  }
+  const segmentJobs = relevantJobs.filter((job) => (fit === "all" ? fitSegmentFor(job) !== "removed" : fitSegmentFor(job) === fit));
+  const jobs = segmentJobs.slice(0, JOB_LIST_LIMIT);
+  const resultFoundCount = selectedRunMetrics?.relevant ?? relevantJobs.length;
   const resultSourceCount = accountedResourceCount || resourceAudits.length;
-  const segmentSummaryLabel = fit === "removed" ? "removed" : fit === "duplicates" ? "duplicate" : fit === "eligible" ? "eligible" : fit === "needs_verification" ? "needing verification" : "worth your time";
+  const worthCount = segmentCounts.all;
+  const segmentDescription = {
+    all: "Eligible roles and roles that need a quick check, best matches first.",
+    eligible: `${segmentCounts.eligible} with no eligibility conflicts.`,
+    needs_verification: `${segmentCounts.needs_verification} that look right but have something to confirm, like sponsorship or location.`,
+    removed: `${segmentCounts.removed} removed by you or by Scout's filters. Restore any that were removed by mistake.`,
+  }[fit];
 
   return (
     <div className="page jobs-page">
@@ -380,8 +395,8 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         <div className={run?.error_summary ? "has-issue" : ""}><span>Source health</span><strong>{run?.error_summary ? "Needs attention" : "All clear"}</strong></div>
       </section>
       <section className="jobs-results-summary" aria-label="Job collection summary">
-        <h2>{jobs.length} {jobs.length === 1 ? "role" : "roles"} {segmentSummaryLabel}</h2>
-        <p>Review the roles that match your search, then prepare the ones worth pursuing.</p>
+        <h2>{query ? `${segmentJobs.length} ${segmentJobs.length === 1 ? "role matches" : "roles match"} "${query}"` : `Showing ${worthCount} ${worthCount === 1 ? "role" : "roles"} worth your time`}</h2>
+        <p>{segmentDescription}{segmentJobs.length > jobs.length ? ` Showing the top ${jobs.length}.` : ""}</p>
       </section>
       <section className="card fetch-audit-card" aria-label="Recent fetches">
         <div className="fetch-audit-header">
@@ -400,7 +415,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
               {fetchHistory.map((historyRun) => (
                 <Link
                   className={run?.id === historyRun.id ? "active" : ""}
-                  href={`/jobs?run=${historyRun.id}&fit=${fit === "duplicates" ? "all" : fit}`}
+                  href={`/jobs?run=${historyRun.id}&fit=${fit}`}
                   key={historyRun.id}
                 >
                   <strong>Fetch {historyRun.id}</strong>
@@ -515,15 +530,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         </label>
         <div className="jobs-fit-segments" role="group" aria-label="Role status filter">
           {FIT_SEGMENTS.map((segment) => (
-            <button className={fit === segment.value ? "active" : ""} name="fit" value={segment.value} type="submit" key={segment.value}>{segment.label}</button>
+            <button className={fit === segment.value ? "active" : ""} name="fit" value={segment.value} type="submit" key={segment.value}>{segment.label} <span className="queue-segment-count">{segmentCounts[segment.value]}</span></button>
           ))}
         </div>
       </form>
-      {duplicateCount > 0 ? (
-        <p className="muted jobs-duplicates-link">
-          <Link className="text-link" href={listRun ? `/jobs?run=${listRun.id}&fit=duplicates` : "/jobs?fit=duplicates"}>Show {duplicateCount} {duplicateCount === 1 ? "duplicate" : "duplicates"}</Link>
-        </p>
-      ) : null}
 
       <section className="jobs-results-list">
         {jobs.length ? <div className="jobs-result-rows">
@@ -618,7 +628,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         </div> : (
           <div className="empty-state">
             <h3>No jobs match these filters</h3>
-            <p>{fit === "removed" ? "Nothing has been removed here." : fit === "duplicates" ? "No duplicates found." : "Clear a filter or collect more company sources."}</p>
+            <p>{fit === "removed" ? "Nothing has been removed here." : run ? "Try another tab, or fetch new jobs." : "Click Fetch new jobs to run your first search."}</p>
           </div>
         )}
       </section>
