@@ -4,6 +4,20 @@ Scout is a private job search app for one candidate. It collects jobs, scores th
 
 Everything runs on your own machine against a local SQLite file. Nothing leaves it except requests to the AI and search providers you choose to configure.
 
+## Screenshots
+
+**Suggested edits.** Scout proposes truthful rewrites for a job, grounded in your truth bank, and explains each one.
+
+![Suggested resume edits](docs/images/suggested-edits.png)
+
+**ATS keywords.** See which job requirements your resume covers, and ask for a rewrite that adds a missing one.
+
+![ATS keyword coverage](docs/images/ats-keywords.png)
+
+**Cover letter.** A draft written from the company's mission and your approved resume, ready to edit.
+
+![Cover letter draft](docs/images/cover-letter.png)
+
 ## Quick start
 
 You need Node.js 22 LTS and pnpm 9 (`corepack enable` installs the right pnpm). Scout runs anywhere Node does; automatic scheduled collection needs macOS.
