@@ -1,28 +1,12 @@
 # Scout
 
-Scout is a private job search app for one candidate. It collects jobs, scores matches, prepares tailored resume drafts, researches contacts, and tracks applications through to an outcome. Everything runs on your own machine against a local SQLite file, with your own API keys. Nothing is sent anywhere except the AI and search providers you choose to configure.
+Scout is a private job search app for one candidate. It collects jobs, scores them against your profile, tailors resume drafts using only facts you have confirmed, researches contacts, and tracks applications through to an outcome.
 
-Job discovery starts from the role, location, seniority, and experience saved during onboarding. Remotive, Jobicy, and Himalayas are built in and do not require an API key. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
+Everything runs on your own machine against a local SQLite file. Nothing leaves it except requests to the AI and search providers you choose to configure.
 
-A job is kept when its title is one Scout searches for. When the title is unusual but the
-description reads like product design work, the job is kept for review rather than dropped,
-so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design
-disciplines, hardware roles, and leadership titles are still filtered out.
+## Quick start
 
-Boards are checked on a schedule that follows what they produce. A board that yields a
-relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and
-then a weekly check, and nothing is ever deleted, so a company that starts hiring again
-recovers on its own.
-
-Every fetched result is saved. Open the fetch result in Jobs to see which roles passed, which were filtered, and the reason for each decision.
-
-## Requirements
-
-- Node.js 22 LTS
-- pnpm 9
-- macOS for automatic collection. The app itself runs anywhere Node does.
-
-## Run Scout
+You need Node.js 22 LTS and pnpm 9 (`corepack enable` installs the right pnpm). Scout runs anywhere Node does; automatic scheduled collection needs macOS.
 
 ```bash
 git clone https://github.com/Nikethana-Nagasubramanian/scout.git
@@ -32,99 +16,98 @@ cp .env.example .env
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). No API keys are needed to get this far.
 
-The first visit opens candidate onboarding.
+## Where to start
 
-Every key in `.env` is optional. Scout collects and scores jobs with none of them set.
+A fresh install opens on the **Search profile** page, and every other page sends you back there until the profile is saved.
 
-| Key | What it turns on |
-| --- | --- |
-| `ANTHROPIC_API_KEY` | Claude for resume prioritization and cover letters. Otherwise Ollama, then a template. |
-| Ollama running locally | Free, private AI drafting on your machine. See [Ollama](#ollama). |
-| `EXA_API_KEY` | Finding companies that are hiring before they show up on boards. |
-| `HUNTER_API_KEY` | Contact research. |
-| `SCOUT_GMAIL_*` | Hiring signals from your job alert emails. |
+1. **Upload your resume.** Import a PDF, DOCX, or text file, or paste the text. Scanned PDFs have no text layer, so paste those instead.
+2. **Review the truth bank.** The first import turns your resume bullets into facts. Remove anything inaccurate and add achievements the resume leaves out. Tailored resumes can only use facts in the truth bank, so this is what keeps them honest.
+3. **Set your search and save.** Target roles, seniority, years of experience, locations, and sponsorship needs decide which jobs Scout keeps and why others are filtered.
+4. **Choose an AI provider** on the Automation page. See [AI setup](#ai-setup) below. Without one, Scout still works and uses templates for drafts.
+5. **Fetch jobs.** Click Fetch new jobs on the Jobs page. Remotive, Jobicy, and Himalayas work with no keys.
+6. **Prepare an application.** Open a job worth your time and prepare it. The tailored resume lands in the Resume queue for review, and approved roles move to Applications.
+
+## API keys
+
+Every key is optional. Put the ones you want in `.env`, which git ignores, and restart `pnpm dev`.
+
+| Key | Where to get it | What it turns on | Cost |
+| --- | --- | --- | --- |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/settings/keys) | Claude for resume suggestions and cover letters. Recommended. | Well under a cent per application on Haiku |
+| `EXA_API_KEY` | [dashboard.exa.ai](https://dashboard.exa.ai) | Finding companies hiring for your role before they reach job boards | Under a dollar a month |
+| `HUNTER_API_KEY` | [hunter.io/api-keys](https://hunter.io/api-keys) | Finding a contact for a shortlisted role | Free tier available |
+| `SCOUT_GMAIL_ADDRESS`, `SCOUT_GMAIL_APP_PASSWORD`, `SCOUT_GMAIL_LABEL` | [Google app passwords](https://myaccount.google.com/apppasswords) (needs 2-step verification) | Reading job alert emails from one Gmail label | Free |
+
+A sensible first setup is just `ANTHROPIC_API_KEY`. Add the others once the basic loop works for you.
+
+## AI setup
+
+Scout uses AI to prioritize resume evidence, suggest truthful rewrites, and draft cover letters. Pick a provider on the Automation page. Scout tries them in this order and never blocks on one that is unavailable:
+
+1. **Claude API**, when `ANTHROPIC_API_KEY` is set. Fastest and best writing. It sends the job posting and your resume evidence to Anthropic. The default model is `claude-haiku-4-5`, changeable on the Automation page.
+2. **Ollama**, when it answers a quick reachability check. Free and fully private, but slower and less reliable on small models.
+3. **A deterministic template**, which is instant and always available.
+
+The line under each cover letter names which one produced it.
+
+### Local Ollama
+
+Use Ollama if you want nothing to leave your machine or do not want to pay for an API.
+
+1. Install it from [ollama.com/download](https://ollama.com/download), or `brew install ollama` on macOS.
+2. Pull the default model. `gemma3:4b` needs about 4 GB of free memory and is the tested default:
+
+   ```bash
+   ollama pull gemma3:4b
+   ```
+
+   With 16 GB of memory or more, a larger model such as `gemma3:12b` writes better but is slower.
+3. Start the server and leave it running:
+
+   ```bash
+   ollama serve
+   ```
+
+4. On the Automation page, set Provider to **Ollama on this Mac** and pick the model you pulled.
+
+If `ollama serve` is not running, Scout silently falls back to the template, so check the line under a draft. Set `OLLAMA_URL` in `.env` if Ollama is not on `http://127.0.0.1:11434`.
+
+## How job discovery works
+
+Discovery starts from the role, location, seniority, and experience in your Search profile. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
+
+A job is kept when its title is one Scout searches for. When the title is unusual but the description reads like product design work, the job is kept for review rather than dropped, so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design disciplines, hardware roles, and leadership titles are filtered out.
+
+Boards are checked on a schedule that follows what they produce. A board that yields a relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and then a weekly check, and nothing is ever deleted, so a company that starts hiring again recovers on its own.
+
+Every fetched result is saved. Open a fetch in Jobs to see which roles passed, which were filtered, and the reason for each decision.
 
 ## What each page does
 
 | Page | Purpose |
 | --- | --- |
-| Home | Daily starting point with the strongest opportunities and the next step for each. |
-| Jobs | Every collected job, its score, and the fetch result explaining why it passed or was filtered. Roles requiring United States citizenship are filtered when your profile says you need sponsorship. |
-| Resume queue | Decide which tailored resumes are ready to use. Approve, regenerate, or reject a draft. Applied jobs move to Applications. |
-| Applications | Track submitted applications, follow-ups, outcomes, and contact research in one place. |
-| Contact research | Find an evidence backed contact for a shortlisted role before you apply. Grouped by application stage. |
-| Target companies | Early company hiring momentum worth validating before contact research and outreach. |
-| Job sources | Everywhere Scout looks and how often. Exa queries and remaining credit, the public feeds, your Gmail label, and every official board grouped by how often it is checked. Resting boards can be woken in bulk. |
-| Candidate profile | The single source of truth for matching and resume generation. |
-| Settings | Collection times, AI provider and model, and related preferences. |
-| Workflow diagnostics | Per fetch step logs, timings, and counts for debugging a collection run. |
+| Job sources | Everywhere Scout looks and how often: Exa queries and remaining credit, public feeds, your Gmail label, and every official board grouped by check frequency. |
+| Jobs | Every collected job, its score, and the fetch result explaining why it passed or was filtered. |
+| Resume queue | Review tailored resumes. Approve, regenerate, or reject a draft. |
+| Applications | Track submitted applications, follow-ups, and outcomes. Download a backup here. |
+| Contacts | Find an evidence backed contact for a shortlisted role before you apply. |
+| Search profile | Your resume, truth bank, and search preferences. The source of truth for matching and resume generation. |
+| Automation | Collection times, AI provider, and model. |
+| Developer logs | Per fetch step logs, timings, and counts for debugging a collection run. |
 
 ## Resume workflow
 
 Prepare a job from the Jobs page to generate a tailored resume draft. Drafts land in the Resume queue, where each version can be expanded, regenerated, approved, or rejected. Approving a resume moves the role forward into Applications. Scout keeps earlier versions so you can compare what changed, and never lets a model invent resume claims.
 
-## AI provider
+## Ollama performance notes
 
-Scout can use either the Claude API or a local Ollama model for resume evidence
-prioritization and cover letter drafting. Pick one under Provider on the Settings page. The
-default is the Claude API, and the order it tries is:
+Roughly a third of a cold local request is the model loading from disk. When Ollama is the chosen provider, Scout keeps the model loaded for 30 minutes. When it is only the fallback, the model is released after each request so it does not hold memory. Override either with `OLLAMA_KEEP_ALIVE`.
 
-1. Claude, when a key is set.
-2. Ollama, but only when it answers a quick reachability check. An Ollama that is not running
-   is skipped rather than waited on.
-3. A deterministic draft, which is instant and always available.
+To let resume suggestions run in parallel, start the server with `OLLAMA_NUM_PARALLEL=4 ollama serve`, which was about 17 percent faster in testing. Using one model for every task avoids reloads.
 
-The line beside a cover letter names whichever one produced it. When the draft came from the
-deterministic path, a Retry with Ollama button appears, so a slow local attempt is your
-choice rather than something you wait through by default.
-
-Ollama keeps every request on your Mac and costs nothing, but it is slow and the smaller
-models are unreliable. The Claude API is faster and writes noticeably better, and it sends the
-job posting and your resume evidence to Anthropic.
-
-For the Claude API, put the key in `.env`, which is ignored by git:
-
-```text
-ANTHROPIC_API_KEY=your-key-here
-```
-
-`CLAUDE_API_KEY` is accepted as an alias.
-
-The model is a setting and defaults to `claude-haiku-4-5`, the cheapest current model. One
-application costs roughly 8000 input and 1000 output tokens across its five calls, which at
-Haiku pricing is well under a cent, so a normal month of applying costs a few tens of cents.
-
-## Ollama
-
-Ollama is optional. Enable it on the Settings page to prioritize existing resume evidence without sending the resume off the Mac.
-
-```bash
-ollama pull gemma3:4b
-ollama serve
-```
-
-Ollama must actually be running for any of this to happen. If `ollama serve` is not up, Scout
-silently falls back to a structured template, so check the line under a cover letter draft: it
-names the model when local AI wrote it, and says so plainly when it did not.
-
-Local AI work is slow because it runs on your Mac, and roughly a third of a cold request is
-the model loading from disk. When Ollama is the chosen provider, Scout keeps the model
-resident for 30 minutes to avoid re-paying that. When it is only the fallback, the model is
-released as soon as the request finishes, so a rare fallback does not hold gigabytes of RAM
-on a small machine. Override either with `OLLAMA_KEEP_ALIVE`. If you want the resume suggestions to overlap rather than queue, start
-the server with `OLLAMA_NUM_PARALLEL=4 ollama serve`, which was worth about 17 percent in
-testing. Switching models between tasks forces a reload, so one model everywhere is faster
-than picking a different one per task.
-
-Ollama runs entirely on your Mac and has no internet access, so it never researches a company
-on its own. Everything it knows comes from the job posting Scout fetched and your saved
-resume evidence.
-
-Scout works without Ollama.
-
-Set `OLLAMA_URL` if Ollama does not run on its default address.
+Ollama has no internet access, so everything it knows comes from the job posting Scout fetched and your truth bank.
 
 ## Gmail hiring signals
 
@@ -167,7 +150,7 @@ returning nothing is run less often rather than deleted.
 
 Edit the queries in `lib/source-presets.ts`, or the `exa_queries` table to change cadence.
 
-Set the key in `.env.local`, which is ignored by git:
+Set the key in `.env`:
 
 ```text
 EXA_API_KEY=your-key-here
@@ -184,7 +167,7 @@ Scout works without Exa. Company discovery is simply skipped when the key is mis
 
 ## Automatic job collection
 
-Set your preferred times on the Settings page, then install the macOS scheduler once:
+Set your preferred times on the Automation page, then install the macOS scheduler once:
 
 ```bash
 pnpm scheduler:install

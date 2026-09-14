@@ -11,6 +11,7 @@ import { jobNeedsFreshReview } from "@/lib/job-deduplication";
 import { isProductDesignRoleFamily } from "@/lib/job-fit";
 import type { Job, ScoreBreakdown, WorkflowLog } from "@/lib/types";
 import { formatDateTime, safeJson } from "@/lib/utils";
+import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
 
@@ -161,6 +162,7 @@ interface JobListRow extends Job {
 }
 
 export default async function JobsPage({ searchParams }: SearchProps) {
+  requireProfile();
   const parameters = await searchParams;
   const query = parameters.q?.trim() || "";
   const requestedRunId = Number(parameters.run);

@@ -126,8 +126,6 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   background: var(--surface-background);
   box-shadow: inset 0 0 0 var(--shell-padding) var(--shell-background);
 }
-body:has(.onboarding-shell) { overflow: auto; background: var(--soft); }
-body:has(.onboarding-shell) .main-shell { height: auto; min-height: 100vh; margin-left: 0; padding: 42px 44px 72px; background: var(--soft); }
 .page {
   --page-padding-x: 32px;
   width: 100%;
@@ -889,26 +887,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
 .status-searching, .status-resolving_email { color: #274f87; background: #e3ebf9; }
 .status-large_company, .status-size_unknown, .status-no_public_contact, .status-no_email, .status-domain_not_found, .status-domain_ambiguous, .status-email_unverified, .status-invalidated { color: #865100; background: #fff0d6; }
 
-.onboarding-shell { min-height: calc(100vh - 76px); display: grid; place-items: center; }
-.onboarding { width: min(920px, 100%); }
-.onboarding-top { text-align: center; margin-bottom: 24px; }
-.onboarding-logo {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  margin: 0 auto 12px;
-  place-items: center;
-  border-radius: 9px;
-  background: #515b41;
-  color: white;
-  font-size: 17px;
-  font-weight: 750;
-}
-.onboarding-top h1 { font-family: var(--font-display); font-size: var(--text-page); line-height: var(--line-page); font-weight: 400; margin: 0 0 6px; letter-spacing: -0.02em; }
-.onboarding-top p { margin: 0; color: var(--muted); }
-.progress { display: flex; justify-content: center; align-items: center; gap: 7px; margin-top: 17px; }
-.progress span { width: 38px; height: 4px; border-radius: 9px; background: var(--line); }
-.progress span.active { background: var(--accent); }
 
 .resume-preview { background: white; border: 1px solid var(--line); padding: 34px; font-family: "Archivo Variable", Arial, sans-serif; color: #111; }
 .resume-preview h2 { text-align: center; font-size: 22px; margin: 0; }
@@ -1681,7 +1659,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
   .queue-decision-spacer { display: none; }
 }
 
-/* Search profile: same language as Jobs — full-bleed header rule, mono uppercase labels,
+/* Search profile: same language as Jobs: full-bleed header rule, mono uppercase labels,
    flat #dcdcdc frames with 4px corners, dashed separators, olive accent. */
 .profile-page { background: #fcfdfd; }
 .profile-page .page-header { align-items: center; padding: 8px 0 28px; }
@@ -1737,3 +1715,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
   .profile-page .form-grid { grid-template-columns: 1fr; }
   .profile-page .page-header { align-items: flex-start; flex-direction: column; }
 }
+.profile-start { display: grid; gap: 10px; margin: 0 0 22px; padding: 14px 16px; border-left: 5px solid #505a41; background: #f6f6f6; }
+.profile-start > strong { font-family: var(--font-metadata); font-size: 12px; font-weight: 500; line-height: 16px; text-transform: uppercase; }
+.profile-start ol { display: grid; gap: 6px; margin: 0; padding-left: 20px; color: #6e6268; font-size: 14px; line-height: 20px; }
+.profile-start li span { color: #000; font-weight: 600; }
+.profile-import-notice { margin: 0 0 22px; padding: 10px 12px; border: 1px solid; border-radius: 4px; font-size: 14px; line-height: 20px; }
+.profile-import-notice.done { border-color: #cbd9e8; color: #49688c; background: #ecf3f6; }
+.profile-import-notice.issue { border-color: #e7c3b8; color: #b94e38; background: #faeee9; }
+.profile-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.profile-page .profile-upload-row input[type="file"] { flex: 1 1 220px; min-width: 0; padding: 6px; font-size: 13px; }

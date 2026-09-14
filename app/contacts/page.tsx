@@ -6,6 +6,7 @@ import { hunterAccountUsage, hunterBudgetStatus, hunterConfigured } from "@/lib/
 import { contactResearchActionLabel, contactResearchIsTerminal } from "@/lib/contact-research-status";
 import { partitionContactOpportunities } from "@/lib/contact-opportunity-tracker";
 import { db } from "@/lib/database";
+import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
 
@@ -154,6 +155,7 @@ function hunterResetLabel(value: string): string {
 }
 
 export default async function ContactsPage() {
+  requireProfile();
   const budget = hunterBudgetStatus();
   const accountUsage = await hunterAccountUsage();
   const isHunterConfigured = hunterConfigured();

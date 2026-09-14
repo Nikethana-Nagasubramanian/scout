@@ -16,6 +16,7 @@ import { gmailConfiguration } from "@/lib/gmail-alerts";
 import { broadDiscoverySearchTitles } from "@/lib/job-fit";
 import type { CandidateProfile, CompanyDiscoverySource, DiscoverySource, JobSource } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
+import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
 
@@ -132,6 +133,7 @@ function ExaSection({ queries, budget, configured }: {
 }
 
 export default function SourcesPage() {
+  requireProfile();
   const sources = db.prepare("SELECT * FROM job_sources ORDER BY name").all() as JobSource[];
   const companyDiscoverySources = db.prepare("SELECT * FROM company_discovery_sources ORDER BY name").all() as CompanyDiscoverySource[];
   const discoverySources = db.prepare("SELECT * FROM discovery_sources ORDER BY name").all() as DiscoverySource[];

@@ -15,6 +15,7 @@ import {
 } from "@/lib/contact-research-status";
 import { db } from "@/lib/database";
 import { formatDate } from "@/lib/utils";
+import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
 
@@ -260,6 +261,7 @@ function ApplicationAccordion({
 }
 
 export default function ApplicationsPage() {
+  requireProfile();
   const isHunterConfigured = hunterConfigured();
   const applications = db.prepare(`
     SELECT applications.*, jobs.title, jobs.company, jobs.location, jobs.apply_url,

@@ -108,9 +108,10 @@ export function ResumeEditor({
   const inspectorDraftRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Keep the rewrite picker or suggestion in view so Accept is reachable without scrolling.
+  const rewriteKeyword = rewriteRequest?.keyword;
   useEffect(() => {
-    if (rewriteRequest || keywordSuggestion) keywordCardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [rewriteRequest?.keyword, keywordSuggestion]);
+    if (rewriteKeyword || keywordSuggestion) keywordCardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [rewriteKeyword, keywordSuggestion]);
 
   useEffect(() => {
     if (requestedGuidance.current) return;

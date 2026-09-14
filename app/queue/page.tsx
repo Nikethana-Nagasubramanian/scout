@@ -11,6 +11,7 @@ import { db } from "@/lib/database";
 import { queueState, type QueueState } from "@/lib/resume-queue";
 import type { ResumeContent } from "@/lib/types";
 import { formatDateTime, safeJson } from "@/lib/utils";
+import { requireProfile } from "@/lib/resume-import";
 
 export const dynamic = "force-dynamic";
 
@@ -197,6 +198,7 @@ function QueueCard({ resume, state }: { resume: QueueRow; state: QueueState }) {
 }
 
 export default async function QueuePage({ searchParams }: QueuePageProps) {
+  requireProfile();
   const parameters = await searchParams;
   const query = parameters.q?.trim() || "";
   const requested = parameters.state || "needs_review";

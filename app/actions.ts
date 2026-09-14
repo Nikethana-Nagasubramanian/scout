@@ -9,6 +9,7 @@ import { clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, 
 import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
+import { extractResumeText, MAX_RESUME_BYTES, seedFactsFromResume } from "@/lib/resume-import";
 import type { ResumeContent } from "@/lib/types";
 import { toJsonList } from "@/lib/utils";
 
@@ -96,25 +97,7 @@ function persistProfile(formData: FormData): void {
     text(formData, "github_url"),
   );
 
-  const factCount = (db.prepare("SELECT COUNT(*) AS count FROM candidate_facts").get() as { count: number }).count;
-  if (factCount === 0 && resumeText) {
-    const candidates = resumeText
-      .split("\n")
-      .map((line) => line.replace(/^[•*\-\s]+/, "").trim())
-      .filter((line) => line.length >= 35 && !line.includes("@"))
-      .slice(0, 30);
-    const insert = db.prepare("INSERT INTO candidate_facts (category, context, claim, skills, verified) VALUES ('Experience', 'Imported from base resume', ?, '[]', 1)");
-    const seed = db.transaction(() => candidates.forEach((line) => insert.run(line)));
-    seed();
-  }
-}
-
-export async function saveOnboardingAction(formData: FormData): Promise<void> {
-  persistProfile(formData);
-  setSetting("collection_mode", text(formData, "collection_mode") === "automatic" ? "automatic" : "manual");
-  clearEligibilityOverrides();
-  scoreAllJobs();
-  redirect("/");
+  seedFactsFromResume(resumeText);
 }
 
 export async function saveProfileAction(formData: FormData): Promise<void> {
@@ -124,6 +107,23 @@ export async function saveProfileAction(formData: FormData): Promise<void> {
   revalidatePath("/profile");
   revalidatePath("/jobs");
   revalidatePath("/queue");
+}
+
+export async function importResumeAction(formData: FormData): Promise<void> {
+  const file = formData.get("resume_file");
+  if (!(file instanceof File) || file.size === 0) redirect("/profile?import=empty");
+  if (file.size > MAX_RESUME_BYTES) redirect("/profile?import=too_large");
+  let resumeText = "";
+  try {
+    resumeText = await extractResumeText(file);
+  } catch {
+    redirect("/profile?import=unreadable");
+  }
+  if (!resumeText) redirect("/profile?import=unreadable");
+  db.prepare("UPDATE candidate_profile SET base_resume_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1").run(resumeText);
+  seedFactsFromResume(resumeText);
+  revalidatePath("/profile");
+  redirect("/profile?import=done");
 }
 
 export async function addFactAction(formData: FormData): Promise<void> {

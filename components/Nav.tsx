@@ -32,7 +32,6 @@ const groups = [
 
 export function Nav() {
   const pathname = usePathname();
-  if (pathname === "/onboarding") return null;
 
   return (
     <aside className="sidebar">
