@@ -1,10 +1,13 @@
 import type { CandidateProfile, ConfidenceBreakdown, Job, ScoreBreakdown } from "@/lib/types";
-import { assessJobEligibility, isUnitedStatesEligible, titleMatchRatio, type JobFitPreferences } from "@/lib/job-fit";
+import { assessJobEligibility, isUnitedStatesEligible, jobSearchTitles, targetsDesignRoles, titleMatchRatio, type JobFitPreferences } from "@/lib/job-fit";
 import { normalizeText, parseList } from "@/lib/utils";
 
 const seniorityTerms = ["intern", "junior", "associate", "mid", "senior", "staff", "principal", "lead", "manager", "director"];
 
-const requirementCatalog: Array<{ label: string; aliases: string[] }> = [
+type Requirement = { label: string; aliases: string[] };
+
+// Detected in job descriptions only for design searches.
+const designRequirements: Requirement[] = [
   { label: "Figma", aliases: ["figma"] },
   { label: "Prototyping", aliases: ["prototyping", "prototype", "prototypes", "protopie", "framer"] },
   { label: "User research", aliases: ["user research", "ux research", "customer research", "qualitative research"] },
@@ -17,6 +20,12 @@ const requirementCatalog: Array<{ label: string; aliases: string[] }> = [
   { label: "Accessibility", aliases: ["accessibility", "accessible design", "wcag"] },
   { label: "Information architecture", aliases: ["information architecture"] },
   { label: "Product strategy", aliases: ["product strategy", "design strategy", "strategic design"] },
+  { label: "Mobile design", aliases: ["mobile design", "mobile product", "ios", "android"] },
+  { label: "Facilitation", aliases: ["facilitation", "facilitate", "workshop", "workshops"] },
+];
+
+// Detected for every search. Profile skills that a posting mentions are always added on top.
+const generalRequirements: Requirement[] = [
   { label: "Cross-functional collaboration", aliases: ["cross functional", "cross-functional", "collaboration", "collaborate"] },
   { label: "Stakeholder management", aliases: ["stakeholder management", "stakeholder communication", "stakeholders"] },
   { label: "Leadership", aliases: ["leadership", "led", "leading", "mentor", "mentoring"] },
@@ -31,10 +40,27 @@ const requirementCatalog: Array<{ label: string; aliases: string[] }> = [
   { label: "JavaScript", aliases: ["javascript"] },
   { label: "HTML/CSS", aliases: ["html css", "html/css", "html", "css"] },
   { label: "Frontend development", aliases: ["frontend", "front end", "front-end"] },
-  { label: "Mobile design", aliases: ["mobile design", "mobile product", "ios", "android"] },
-  { label: "Facilitation", aliases: ["facilitation", "facilitate", "workshop", "workshops"] },
   { label: "Agile", aliases: ["agile", "scrum"] },
+  { label: "Python", aliases: ["python"] },
+  { label: "Java", aliases: ["java"] },
+  { label: "Go", aliases: ["golang"] },
+  { label: "SQL", aliases: ["sql", "postgres", "postgresql", "mysql"] },
+  { label: "Node.js", aliases: ["node.js", "nodejs", "node js"] },
+  { label: "AWS", aliases: ["aws", "amazon web services"] },
+  { label: "Cloud platforms", aliases: ["gcp", "google cloud", "azure", "cloud infrastructure"] },
+  { label: "Kubernetes", aliases: ["kubernetes", "k8s"] },
+  { label: "APIs", aliases: ["rest api", "rest apis", "graphql", "api design"] },
+  { label: "Distributed systems", aliases: ["distributed systems", "microservices"] },
+  { label: "Testing", aliases: ["unit testing", "test automation", "automated testing"] },
+  { label: "Excel", aliases: ["excel", "spreadsheets"] },
+  { label: "Roadmapping", aliases: ["roadmap", "roadmaps", "roadmapping"] },
+  { label: "Go-to-market", aliases: ["go to market", "go-to-market", "gtm"] },
+  { label: "Communication", aliases: ["written communication", "verbal communication", "communication skills"] },
 ];
+
+function requirementCatalog(profile: CandidateProfile): Requirement[] {
+  return targetsDesignRoles(jobSearchTitles(profile)) ? [...designRequirements, ...generalRequirements] : generalRequirements;
+}
 
 function tokenSet(value: string): Set<string> {
   return new Set(normalizeText(value).split(" ").filter((token) => token.length > 1));
@@ -65,7 +91,7 @@ function requirementCoverage(job: Job, profile: CandidateProfile, profileSkills:
 } {
   const jobText = job.description;
   const candidateEvidence = [profile.professional_summary, profile.base_resume_text, ...profileSkills].join(" ");
-  const requirements = requirementCatalog.filter((requirement) => (
+  const requirements = requirementCatalog(profile).filter((requirement) => (
     requirement.aliases.some((alias) => containsWholePhrase(jobText, alias))
   ));
   const catalogLabels = new Set(requirements.map((requirement) => normalizeText(requirement.label)));

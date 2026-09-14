@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
 import { db, setSetting, syncSearchSourcesToProfile } from "@/lib/database";
 import { DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
-import { clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
+import { addBoardFromInput, clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
 import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
@@ -150,16 +150,10 @@ export async function deleteFactAction(formData: FormData): Promise<void> {
 }
 
 export async function addSourceAction(formData: FormData): Promise<void> {
-  const name = text(formData, "name");
-  const identifier = text(formData, "identifier").replace(/^https?:\/\/[^/]+\//, "").split(/[/?#]/)[0];
-  const sourceType = text(formData, "source_type");
-  if (!name || !identifier || !["greenhouse", "lever", "ashby"].includes(sourceType)) return;
-  db.prepare("INSERT OR IGNORE INTO job_sources (name, source_type, identifier) VALUES (?, ?, ?)").run(
-    name,
-    sourceType,
-    identifier,
-  );
+  const result = await addBoardFromInput(text(formData, "board"), text(formData, "name"));
   revalidatePath("/sources");
+  const query = new URLSearchParams({ board: result.status, name: result.name, jobs: String(result.jobCount) });
+  redirect(`/sources?${query}#official-boards`);
 }
 
 export async function addCompanyDiscoverySourceAction(formData: FormData): Promise<void> {

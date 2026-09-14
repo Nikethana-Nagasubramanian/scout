@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { db } from "@/lib/database";
+import { targetsDesignRoles } from "@/lib/job-fit";
 import { stripHtml } from "@/lib/utils";
 
 const PARSER_VERSION = 6;
@@ -71,6 +72,22 @@ interface ParsedAlertInput {
   subject: string;
   from: string;
   date: Date | null;
+  /** The Search profile's target roles. Defaults to the product design titles. */
+  targetTitles?: string[];
+}
+
+const seniorityPrefix = "(?:senior|sr\\.?|staff|principal|lead|founding|forward deployed|associate|junior|mid-level|mid level)?\\s*";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A pattern per target role that tolerates a seniority prefix and flexible spacing. */
+function targetTitlePatterns(targetTitles: string[]): RegExp[] {
+  return targetTitles
+    .map((title) => title.trim().split(/\s+/).map(escapeRegExp).join("[\\s/-]+"))
+    .filter(Boolean)
+    .map((title) => new RegExp(`\\b${seniorityPrefix}${title}s?\\b`, "i"));
 }
 
 function cleanEnvironmentValue(value: string | undefined): string {
@@ -230,10 +247,12 @@ function looksLikeJobTitle(value: string): boolean {
   return /[a-z]/i.test(value) && !/[.!?].+[.!?]/.test(value);
 }
 
-function titleFromLines(lines: string[]): string {
+function titleFromLines(lines: string[], targetTitles: string[] = []): string {
+  const targets = targetTitlePatterns(targetTitles);
   return lines.find((line) =>
     looksLikeJobTitle(line)
-    && /\b(?:product|design|designer|ux|ui|research|researcher|engineer|developer|manager|analyst)\b/i.test(line)
+    && (/\b(?:product|design|designer|ux|ui|research|researcher|engineer|developer|manager|analyst)\b/i.test(line)
+      || targets.some((pattern) => pattern.test(line)))
   ) || "";
 }
 
@@ -279,10 +298,13 @@ function normalizeJobTitle(value: string, company: string, location: string): st
   return title || value;
 }
 
-function repairBuiltInIdentity(company: string, title: string): { company: string; title: string } {
+function repairBuiltInIdentity(company: string, title: string, targetTitles: string[] = []): { company: string; title: string } {
   const corruptedCompany = /(?:product designer|style=|display:|white-space|pen-to-square|<\/|<div|^iv\b)/i.test(company);
   if (!corruptedCompany) return { company, title };
-  const roleStart = title.search(/\b(?:senior|staff|principal|founding|lead|innovation|product|ux|ui)\b[\s\S]*\bdesigner\b/i);
+  const targetStarts = targetTitlePatterns(targetTitles).map((pattern) => title.search(pattern)).filter((index) => index > 0);
+  const roleStart = targetStarts.length
+    ? Math.min(...targetStarts)
+    : title.search(/\b(?:senior|staff|principal|founding|lead|innovation|product|ux|ui)\b[\s\S]*\bdesigner\b/i);
   if (roleStart <= 0) return { company, title };
   const repairedCompany = title.slice(0, roleStart).replace(/[,:|\s]+$/, "").trim();
   const repairedTitle = title.slice(roleStart).trim();
@@ -342,8 +364,8 @@ function enclosingContentBlock(html: string, anchor: EmailAnchor): string {
   return blocks[0]?.html || html.slice(Math.max(0, anchor.index - 1_500), anchor.endIndex + 1_500);
 }
 
-function newsletterRoleHint(text: string): string {
-  const patterns = [
+function newsletterRoleHint(text: string, targetTitles?: string[]): string {
+  const patterns = targetTitles?.length && !targetsDesignRoles(targetTitles) ? targetTitlePatterns(targetTitles) : [
     /\b(?:senior|staff|principal|lead|founding|forward deployed|associate|junior|mid-level|mid level)?\s*(?:product|ux|ui|ui\/ux|interaction|visual|brand|design systems?)\s+designer\b/i,
     /\b(?:senior|staff|principal|lead|founding|associate|junior|mid-level|mid level)?\s*design engineer\b/i,
     /\b(?:senior|staff|principal|lead|founding|forward deployed|associate|junior|mid-level|mid level)\s+designer\b/i,
@@ -428,7 +450,7 @@ export function parseHiringNewsletterSignals(input: ParsedAlertInput): GmailHiri
     const blockHtml = enclosingContentBlock(input.html || "", anchor);
     const signalText = cleanInlineText(blockHtml).slice(0, 2_000);
     if (!signalText || /\b(?:unsubscribe|privacy|manage preferences|share this post)\b/i.test(signalText)) return [];
-    const roleHint = newsletterRoleHint(signalText);
+    const roleHint = newsletterRoleHint(signalText, input.targetTitles);
     const company = newsletterCompany(blockHtml, signalText, roleHint, url);
     if (company === "Company not listed") return [];
     const location = extractLocation(htmlToLines(blockHtml));
@@ -485,7 +507,7 @@ function buildJob(
   const canonicalUrl = canonicalizeJobUrl(anchor.href);
   if (!canonicalUrl || !isJobUrl(canonicalUrl)) return null;
   if (new URL(canonicalUrl).hostname.toLowerCase() === "cts.indeed.com" && !looksLikeJobTitle(anchor.text)) return null;
-  const rawTitle = looksLikeJobTitle(anchor.text) ? anchor.text : titleFromLines(lines);
+  const rawTitle = looksLikeJobTitle(anchor.text) ? anchor.text : titleFromLines(lines, input.targetTitles);
   if (!rawTitle) return null;
   const location = extractLocation(lines);
   let company = extractCompany(lines, rawTitle, location);
@@ -502,7 +524,7 @@ function buildJob(
         : "";
   const source = inferSource(input, canonicalUrl);
   if (source.sourceType === "gmail_builtin") {
-    const repaired = repairBuiltInIdentity(company, title);
+    const repaired = repairBuiltInIdentity(company, title, input.targetTitles);
     company = repaired.company;
     title = repaired.title;
   }
@@ -569,7 +591,7 @@ export function parseJobAlertEmail(input: ParsedAlertInput): GmailAlertJob[] {
   return [...new Map(candidates.map((job) => [`${job.sourceType}:${job.externalId}`, job])).values()];
 }
 
-export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
+export async function fetchGmailAlertJobs(targetTitles?: string[]): Promise<GmailAlertFetchResult> {
   const configuration = gmailConfiguration();
   if (!configuration.configured) {
     throw new Error(`Gmail alerts are missing ${configuration.missing.join(", ")}.`);
@@ -621,6 +643,7 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
         subject: parsed.subject || "",
         from: parsed.from?.text || "",
         date: parsed.date || null,
+        targetTitles,
       });
       const parsedSignals = parseHiringNewsletterSignals({
         html: typeof parsed.html === "string" ? parsed.html : "",
@@ -628,6 +651,7 @@ export async function fetchGmailAlertJobs(): Promise<GmailAlertFetchResult> {
         subject: parsed.subject || "",
         from: parsed.from?.text || "",
         date: parsed.date || null,
+        targetTitles,
       });
       jobs.push(...parsedJobs);
       hiringSignals.push(...parsedSignals);

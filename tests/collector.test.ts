@@ -213,6 +213,21 @@ describe("collector rate-limit helpers", () => {
 });
 
 describe("Gmail alert parsing", () => {
+  it("reads newsletter roles for the profile's target titles", () => {
+    const input = {
+      html: `<p><strong>Gamma</strong> is hiring a Senior Backend Engineer in New York. <a href="https://careers.gamma.app/jobs/backend">Apply here</a></p>
+        <p><strong>Ineffable Intelligence</strong> is hiring a Forward Deployed Designer. <a href="https://jobs.ashbyhq.com/ineffable">View open roles</a></p>`,
+      text: "",
+      subject: "Open roles with founders",
+      from: "a16z Build <newsletter@substack.com>",
+      date: new Date("2026-05-05T12:00:00Z"),
+      targetTitles: ["Backend Engineer"],
+    };
+    const signals = parseHiringNewsletterSignals(input);
+    expect(signals.find((signal) => signal.company === "Gamma")).toMatchObject({ roleHint: "Senior Backend Engineer", signalType: "explicit_role" });
+    expect(signals.find((signal) => signal.company === "Ineffable Intelligence")).toMatchObject({ roleHint: "", signalType: "company_hiring" });
+  });
+
   it("separates explicit newsletter roles from broad company hiring signals", () => {
     const input = {
       html: `

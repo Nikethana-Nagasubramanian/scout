@@ -113,7 +113,7 @@ function ExaSection({ queries, budget, configured, generated }: {
           <h2>Exa company discovery</h2>
           <p>{generated
             ? "Generated from your target roles. Daily searches look only at Greenhouse, Ashby, and Lever postings from the last 30 days; the weekly search covers the open web."
-            : "Curated product design searches. Daily searches look only at Greenhouse, Ashby, and Lever postings from the last 30 days; the weekly search covers the open web."} Boards found in results are added to Official company boards.</p>
+            : "Curated product design searches from the original install. Daily searches look only at Greenhouse, Ashby, and Lever postings from the last 30 days; the weekly search covers the open web."} Boards found in results are added to Official company boards.</p>
         </div>
         <div className="contact-budget">
           <StatusPill status={configured ? (budget.state === "ok" ? "healthy" : budget.state) : "setup needed"} />
@@ -143,7 +143,20 @@ function ExaSection({ queries, budget, configured, generated }: {
   );
 }
 
-export default function SourcesPage() {
+function boardNotice(params: { board?: string; name?: string; jobs?: string }): { tone: "done" | "issue"; text: string } | null {
+  const name = params.name || "That board";
+  const jobs = Number(params.jobs || 0);
+  switch (params.board) {
+    case "added": return { tone: "done", text: `${name} added. It has ${jobs} open ${jobs === 1 ? "job" : "jobs"}, and Scout will check it on the next fetch.` };
+    case "exists": return { tone: "done", text: `${name} was already tracked, so Scout made sure it is enabled.` };
+    case "invalid": return { tone: "issue", text: "Paste a careers page link, a Greenhouse, Ashby, or Lever job link, or a board name like examplecompany." };
+    case "not_found": return { tone: "issue", text: `Scout could not find a working Greenhouse, Ashby, or Lever board for ${name}. Try pasting a link to one of the company's job postings.` };
+    default: return null;
+  }
+}
+
+export default async function SourcesPage({ searchParams }: { searchParams: Promise<{ board?: string; name?: string; jobs?: string }> }) {
+  const notice = boardNotice(await searchParams);
   requireProfile();
   const sources = db.prepare("SELECT * FROM job_sources ORDER BY name").all() as JobSource[];
   const companyDiscoverySources = db.prepare("SELECT * FROM company_discovery_sources ORDER BY name").all() as CompanyDiscoverySource[];
@@ -300,7 +313,7 @@ export default function SourcesPage() {
         <summary><span><strong>Company discovery</strong><small>{companyDiscoverySources.filter((source) => source.enabled).length} discovery pages and {exaQueries.length} semantic searches</small></span><StatusPill status={!exaReady ? "setup needed" : exaBudget.state === "exhausted" || discoveryPageIssues ? "error" : "healthy"} /></summary>
         <div className="source-section-body stack">
         {exaReady ? <ExaBudgetNotice /> : null}
-        <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} generated={!designSearch} />
+        <ExaSection queries={exaQueries} budget={exaBudget} configured={exaReady} generated={!(designSearch && getSetting("author_presets") === "1")} />
         <div className="two-column">
         <section className="card form-card">
           <div className="form-section">
@@ -342,20 +355,20 @@ export default function SourcesPage() {
         </div>
       </details>
 
-      <details className="source-section">
+      {notice ? <p className={`profile-import-notice ${notice.tone}`} role="status">{notice.text}</p> : null}
+      <details className="source-section" id="official-boards" open={notice ? true : undefined}>
         <summary><span><strong>Official company boards</strong><small>{tierCounts.watchlist} hourly, {tierCounts.standard} daily, {tierCounts.dormant} weekly{pausedSources.length ? `, ${pausedSources.length} paused` : ""}</small></span><StatusPill status={boardIssues ? "error" : "healthy"} /></summary>
         <div className="source-section-body two-column">
         <section className="card form-card">
           <div className="form-section">
-            <h2>Add an official board manually</h2>
-            <p>Scout normally detects Greenhouse and Ashby boards from jobs and discovery pages. Manual entry remains available for a board you already know.</p>
+            <h2>Add a company</h2>
+            <p>Paste the company&apos;s careers page or any of its job postings. Scout finds the Greenhouse, Ashby, or Lever board behind it and checks that it works before saving.</p>
             <form action={addSourceAction}>
               <div className="form-grid">
-                <div className="field full"><label htmlFor="name">Company name</label><input id="name" name="name" required placeholder="Example Company" /></div>
-                <div className="field"><label htmlFor="source_type">Career platform</label><select id="source_type" name="source_type"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever</option></select></div>
-                <div className="field"><label htmlFor="identifier">Board token or site name</label><input id="identifier" name="identifier" required placeholder="examplecompany" /></div>
+                <div className="field full"><label htmlFor="board">Careers page, job link, or board name</label><input id="board" name="board" required placeholder="https://example.com/careers" /></div>
+                <div className="field full"><label htmlFor="name">Company name</label><input id="name" name="name" placeholder="Optional. Taken from the board if empty." /></div>
               </div>
-              <div className="form-actions"><button className="button" type="submit">Add source</button></div>
+              <div className="form-actions"><button className="button" type="submit">Find and add board</button></div>
             </form>
           </div>
         </section>

@@ -26,8 +26,9 @@ A fresh install opens on the **Search profile** page, and every other page sends
 2. **Review the truth bank.** The first import turns your resume bullets into facts. Remove anything inaccurate and add achievements the resume leaves out. Tailored resumes can only use facts in the truth bank, so this is what keeps them honest.
 3. **Set your search and save.** Target roles, seniority, years of experience, locations, and sponsorship needs decide which jobs Scout keeps and why others are filtered.
 4. **Choose an AI provider** on the Automation page. See [AI setup](#ai-setup) below. Without one, Scout still works and uses templates for drafts.
-5. **Fetch jobs.** Click Fetch new jobs on the Jobs page. Remotive, Jobicy, and Himalayas work with no keys.
-6. **Prepare an application.** Open a job worth your time and prepare it. The tailored resume lands in the Resume queue for review, and approved roles move to Applications.
+5. **Add companies you want to watch** (optional). On Job sources, paste a company's careers page or any of its job links. Scout finds its Greenhouse, Ashby, or Lever board and checks it works.
+6. **Fetch jobs.** Click Fetch new jobs on the Jobs page. Remotive, Jobicy, and Himalayas work with no keys.
+7. **Prepare an application.** Open a job worth your time and prepare it. The tailored resume lands in the Resume queue for review, and approved roles move to Applications.
 
 ## API keys
 
@@ -76,13 +77,23 @@ If `ollama serve` is not running, Scout silently falls back to the template, so 
 
 ## How job discovery works
 
-Discovery starts from the role, location, seniority, and experience in your Search profile. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
+Scout works for any role, not just design. Everything it searches for comes from the target roles in your Search profile.
 
-Scout searches for the target roles in your Search profile. A job matches when its title contains every word of a target role, and is kept for review when it shares half of them. For design searches, a stricter set of rules applies. When the title is unusual but the description reads like product design work, the job is kept for review rather than dropped, so an "Interaction Designer" or "Design Technologist" posting still reaches you. Other design disciplines, hardware roles, and leadership titles are filtered out.
+**Sources.** A fresh install starts with only the three public feeds. You add the rest:
 
-Boards are checked on a schedule that follows what they produce. A board that yields a relevant role moves to a frequent watchlist, one that stays quiet falls back to a daily and then a weekly check, and nothing is ever deleted, so a company that starts hiring again recovers on its own.
+| Source | How to add it |
+| --- | --- |
+| Remotive, Jobicy, Himalayas | Built in. Each request searches one of your target roles. |
+| Company boards (Greenhouse, Ashby, Lever) | Job sources page: paste a careers page, a job link, or a board name. Scout also adds boards it spots in fetched jobs, Exa results, and discovery pages. |
+| Discovery pages | Job sources page: paste a VC portfolio or company directory. Scout reads it daily for company boards. |
+| Exa | Set `EXA_API_KEY`. Searches are generated from your target roles. |
+| Gmail | Set the `SCOUT_GMAIL_*` keys and send job alerts to that label. |
 
-Every fetched result is saved. Open a fetch in Jobs to see which roles passed, which were filtered, and the reason for each decision.
+**Matching.** A job matches when its title contains every word of a target role ("Senior Software Engineer, Payments" matches Software Engineer), and is kept for review when it shares half of them. Lead, staff, manager, and director titles are filtered unless your target roles or seniority include them. Design searches get extra rules: other design disciplines and hardware roles are filtered, and design-adjacent titles are kept for review when the description reads like product design.
+
+**Schedule.** A board that produces an eligible role is checked hourly. After 3 empty checks it drops to daily, and after 8 to weekly. Boards are never deleted, so a company that starts hiring again recovers on its own.
+
+Every fetched result is saved. Open a fetch in Jobs to see which roles passed, which were filtered, and why.
 
 ## What each page does
 
@@ -127,14 +138,14 @@ pnpm collect:gmail
 
 ## Contact research
 
-The Contact research page uses Hunter to find an evidence backed contact for a role. Set `HUNTER_API_KEY` to enable it. Scout tracks credit usage against a budget and shows the remaining allowance on the page. Without the key the page still lists opportunities, but cannot run a lookup.
+The Contacts page uses Hunter to find an evidence backed contact for a role. Set `HUNTER_API_KEY` to enable it. Scout tracks credit usage against a budget and shows the remaining allowance on the page. Without the key the page still lists opportunities, but cannot run a lookup.
 
 ## Company discovery with Exa
 
 Scout uses [Exa](https://exa.ai) to find companies that are hiring for your role but are not
 yet on any board it tracks.
 
-Four natural-language queries run at most once a day against the known ATS hosts
+Daily queries run at most once a day against the known ATS hosts
 (`jobs.ashbyhq.com`, `jobs.lever.co`, and both Greenhouse board domains), looking back 30
 days. Those results are job postings whose board is already named in the URL, so Scout reads
 the board straight from the link without crawling anything.
@@ -148,7 +159,7 @@ never asks Exa to judge fit: scoring happens afterwards against the full job tex
 are deduplicated by canonical URL before anything is fetched, and a query that keeps
 returning nothing is run less often rather than deleted.
 
-The queries follow your target roles. Product design searches use the curated queries in `lib/source-presets.ts`; any other search gets one daily query per target role plus a weekly open-web query, regenerated whenever you save the Search profile or Automation settings. The design-only discovery pages are paused for non-design searches.
+The queries are generated from your target roles: one daily query per role (up to four) plus one weekly open-web query. They are rebuilt whenever you save the Search profile or Automation settings.
 
 Set the key in `.env`:
 

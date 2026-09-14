@@ -839,6 +839,67 @@ async function discoverBoardsFromCompanyLink(
   return [...boards.values()];
 }
 
+export type AddBoardStatus = "added" | "exists" | "invalid" | "not_found";
+
+export interface AddBoardResult {
+  status: AddBoardStatus;
+  name: string;
+  jobCount: number;
+}
+
+/**
+ * Adds a board from whatever the user pastes: a Greenhouse, Ashby, or Lever link, a company
+ * careers page that embeds one, or a bare board name. The board is fetched once before it is
+ * saved, so a wrong entry is reported instead of silently producing nothing.
+ */
+export async function addBoardFromInput(input: string, name = ""): Promise<AddBoardResult> {
+  const value = input.trim();
+  const fail = (status: AddBoardStatus): AddBoardResult => ({ status, name: name || value, jobCount: 0 });
+  if (!value) return fail("invalid");
+  const log: RequestLogger = () => undefined;
+
+  let candidates: DetectedAtsBoard[] = [];
+  if (/^https?:\/\//i.test(value) || /^[\w-]+(\.[\w-]+)+\//.test(value)) {
+    const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    if (!isSafePublicUrl(url)) return fail("invalid");
+    try {
+      const page = await detectBoardsOnPage(url, log);
+      candidates = page.boards;
+      if (!candidates.length && page.html) {
+        for (const careerUrl of extractCareerPageLinks(page.html, page.finalUrl).slice(0, 2)) {
+          candidates = (await detectBoardsOnPage(careerUrl, log).catch(() => ({ boards: [] }))).boards;
+          if (candidates.length) break;
+        }
+      }
+    } catch {
+      return fail("not_found");
+    }
+  } else if (/^[a-z0-9_-]{2,100}$/i.test(value)) {
+    candidates = (["greenhouse", "ashby", "lever"] as const).map((sourceType) => ({ sourceType, identifier: value.toLowerCase(), evidenceUrl: "" }));
+  } else {
+    return fail("invalid");
+  }
+
+  for (const board of candidates) {
+    if (!/^[a-z0-9_-]{2,100}$/i.test(board.identifier)) continue;
+    try {
+      const jobs = await fetchSource({ source_type: board.sourceType, identifier: board.identifier, name: board.identifier } as JobSource, log);
+      const boardName = name || companyNameFromIdentifier(board.identifier);
+      const result = db.prepare(`
+        INSERT OR IGNORE INTO job_sources (name, source_type, identifier, enabled, auto_discovered, discovered_from_url)
+        VALUES (?, ?, ?, 1, 0, ?)
+      `).run(boardName, board.sourceType, board.identifier, board.evidenceUrl);
+      if (result.changes === 0) {
+        db.prepare("UPDATE job_sources SET enabled = 1 WHERE source_type = ? AND identifier = ?").run(board.sourceType, board.identifier);
+      }
+      return { status: result.changes ? "added" : "exists", name: boardName, jobCount: jobs.length };
+    } catch {
+      // Try the next platform or detected board.
+    }
+  }
+  return fail("not_found");
+}
+
 const MAX_EXA_COMPANIES_PER_RUN = 8;
 
 /**
@@ -1083,6 +1144,7 @@ async function runCompanyDiscoverySource(runId: number, source: CompanyDiscovery
       subject: source.name,
       from: "Substack",
       date: null,
+      targetTitles: jobSearchTitles(db.prepare("SELECT target_titles FROM candidate_profile WHERE id = 1").get() as { target_titles: string }),
     })
     : [];
   if (newsletterSignals.length) {
@@ -1517,7 +1579,7 @@ export async function runCollection(slot = "manual"): Promise<CollectionResult> 
         { label: gmail.label, maximumMessages: 50 },
       );
       try {
-        const fetched = await fetchGmailAlertJobs();
+        const fetched = await fetchGmailAlertJobs(jobSearchTitles(profile));
         let newsletterBoardsAdded = 0;
         const saveHiringSignals = db.transaction(() => {
           const saveSignal = db.prepare(`

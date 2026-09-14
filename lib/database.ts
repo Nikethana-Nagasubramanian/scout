@@ -459,6 +459,15 @@ const seedSettings = db.transaction(() => {
 });
 seedSettings();
 
+// Installs from before this setting existed keep the original author's preset sources. A fresh
+// install starts with only the built-in public feeds, and the user adds their own sources.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'author_presets'").get()) {
+  const existingInstall = (db.prepare("SELECT (SELECT COUNT(*) FROM jobs) + (SELECT COUNT(*) FROM company_discovery_sources) AS count").get() as { count: number }).count > 0;
+  setSetting("author_presets", existingInstall ? "1" : "0");
+  if (!existingInstall) setSetting("hiring_cafe_source_seeded", "1");
+}
+const useAuthorPresets = getSetting("author_presets") === "1";
+
 const hiringCafeSeeded = db.prepare("SELECT value FROM settings WHERE key = 'hiring_cafe_source_seeded'").get() as { value: string } | undefined;
 if (!hiringCafeSeeded) {
   db.prepare(`
@@ -542,20 +551,20 @@ const seedVcDiscoverySources = db.transaction(() => {
     );
   }
 });
-seedVcDiscoverySources();
+if (useAuthorPresets) seedVcDiscoverySources();
 
 const presetPauseReason = "Paused: this preset only lists design jobs, and your target roles are not design roles.";
 
 /**
- * Keeps search sources in line with the Search profile. Design searches use the curated Exa
- * queries and design-filtered discovery pages. Any other search gets Exa queries generated
- * from its target roles, and the design-only pages are paused with the reason shown.
+ * Keeps search sources in line with the Search profile. Exa queries are generated from the
+ * target roles, except on the author's own install, where design searches keep the curated
+ * presets. Design-only preset pages are paused, with the reason shown, for other searches.
  */
 export function syncSearchSourcesToProfile(): void {
   const profile = db.prepare("SELECT target_titles, target_seniority FROM candidate_profile WHERE id = 1").get() as Pick<CandidateProfile, "target_titles" | "target_seniority">;
   const titles = jobSearchTitles(profile);
   const design = targetsDesignRoles(titles);
-  const desired = design
+  const desired = design && useAuthorPresets
     ? exaQueryPresets
     : generatedExaQueries(titles, profile.target_seniority, getSetting("search_usa_only", "1") === "1");
   const upsert = db.prepare(`
