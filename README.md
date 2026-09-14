@@ -1,6 +1,6 @@
 # Scout
 
-Scout is a private job search app for one candidate. It collects jobs, scores matches, prepares tailored resume drafts, researches contacts, and tracks applications through to an outcome. Everything runs locally on your Mac against a SQLite file.
+Scout is a private job search app for one candidate. It collects jobs, scores matches, prepares tailored resume drafts, researches contacts, and tracks applications through to an outcome. Everything runs on your own machine against a local SQLite file, with your own API keys. Nothing is sent anywhere except the AI and search providers you choose to configure.
 
 Job discovery starts from the role, location, seniority, and experience saved during onboarding. Remotive, Jobicy, and Himalayas are built in and do not require an API key. Company Greenhouse, Ashby, and Lever boards are optional watchlist sources, and Scout adds official boards automatically when a matching job exposes one.
 
@@ -18,20 +18,33 @@ Every fetched result is saved. Open the fetch result in Jobs to see which roles 
 
 ## Requirements
 
-- macOS
 - Node.js 22 LTS
 - pnpm 9
+- macOS for automatic collection. The app itself runs anywhere Node does.
 
 ## Run Scout
 
 ```bash
+git clone https://github.com/Nikethana-Nagasubramanian/scout.git
+cd scout
 pnpm install
+cp .env.example .env
 pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
 The first visit opens candidate onboarding.
+
+Every key in `.env` is optional. Scout collects and scores jobs with none of them set.
+
+| Key | What it turns on |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Claude for resume prioritization and cover letters. Otherwise Ollama, then a template. |
+| Ollama running locally | Free, private AI drafting on your machine. See [Ollama](#ollama). |
+| `EXA_API_KEY` | Finding companies that are hiring before they show up on boards. |
+| `HUNTER_API_KEY` | Contact research. |
+| `SCOUT_GMAIL_*` | Hiring signals from your job alert emails. |
 
 ## What each page does
 

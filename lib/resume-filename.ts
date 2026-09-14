@@ -1,5 +1,3 @@
-const CANDIDATE_FILENAME_PREFIX = "Nikethana";
-
 function filenameSegment(value: string, fallback: string): string {
   const normalized = value
     .normalize("NFKD")
@@ -10,10 +8,15 @@ function filenameSegment(value: string, fallback: string): string {
   return normalized || fallback;
 }
 
-export function resumePdfFilename(company: string): string {
-  return `${CANDIDATE_FILENAME_PREFIX}_Resume_${filenameSegment(company, "Company")}.pdf`;
+/** Files are named after the candidate's first name, so a recruiter can tell them apart. */
+function candidatePrefix(fullName: string): string {
+  return filenameSegment(fullName.trim().split(/\s+/)[0] || "", "Candidate");
 }
 
-export function coverLetterPdfFilename(company: string): string {
-  return `${CANDIDATE_FILENAME_PREFIX}_CoverLetter_${filenameSegment(company, "Company")}.pdf`;
+export function resumePdfFilename(company: string, fullName = ""): string {
+  return `${candidatePrefix(fullName)}_Resume_${filenameSegment(company, "Company")}.pdf`;
+}
+
+export function coverLetterPdfFilename(company: string, fullName = ""): string {
+  return `${candidatePrefix(fullName)}_CoverLetter_${filenameSegment(company, "Company")}.pdf`;
 }

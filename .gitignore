@@ -15,3 +15,7 @@ dist/
 *.tsbuildinfo
 *.log
 .DS_Store
+
+# Local QA screenshots can contain real resume and contact details
+artifacts/
+design-qa-*.png

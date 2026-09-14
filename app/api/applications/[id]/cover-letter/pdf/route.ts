@@ -37,7 +37,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     row.company,
     row.updated_at,
   );
-  const filename = coverLetterPdfFilename(row.company);
+  const filename = coverLetterPdfFilename(row.company, row.full_name);
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",

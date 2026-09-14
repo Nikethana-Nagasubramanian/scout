@@ -19,7 +19,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const parsedContent = safeJson<ResumeContent>(row.content_json, { candidateName: "Candidate", contactLine: "", targetTitle: "", summary: "", skills: [], facts: [], audit: { selectedFactIds: [], includedKeywords: [], unsupportedKeywords: [] } });
   const content = { ...parsedContent, skillCategories: resumeSkillCategories(parsedContent, row.description) };
   const buffer = await generatePdf(content);
-  const filename = resumePdfFilename(row.company);
+  const filename = resumePdfFilename(row.company, parsedContent.candidateName);
   const preview = new URL(request.url).searchParams.get("preview") === "1";
   const disposition = preview ? "inline" : "attachment";
   return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `${disposition}; filename="${filename}"` } });

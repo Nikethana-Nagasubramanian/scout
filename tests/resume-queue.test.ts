@@ -4,14 +4,14 @@ import { partitionResumeQueue, queueState } from "@/lib/resume-queue";
 
 describe("resumePdfFilename", () => {
   it("uses the candidate prefix and a safe company segment", () => {
-    expect(resumePdfFilename("Fieldguide")).toBe("Nikethana_Resume_Fieldguide.pdf");
-    expect(resumePdfFilename("Brown Brothers & Harriman")).toBe("Nikethana_Resume_Brown_Brothers_Harriman.pdf");
-    expect(resumePdfFilename("  ")).toBe("Nikethana_Resume_Company.pdf");
+    expect(resumePdfFilename("Fieldguide", "Alex Rivera")).toBe("Alex_Resume_Fieldguide.pdf");
+    expect(resumePdfFilename("Brown Brothers & Harriman", "Alex Rivera")).toBe("Alex_Resume_Brown_Brothers_Harriman.pdf");
+    expect(resumePdfFilename("  ", "Alex Rivera")).toBe("Alex_Resume_Company.pdf");
   });
 
   it("uses the cover letter naming convention", () => {
-    expect(coverLetterPdfFilename("Fieldguide")).toBe("Nikethana_CoverLetter_Fieldguide.pdf");
-    expect(coverLetterPdfFilename("Brown Brothers & Harriman")).toBe("Nikethana_CoverLetter_Brown_Brothers_Harriman.pdf");
+    expect(coverLetterPdfFilename("Fieldguide", "Alex Rivera")).toBe("Alex_CoverLetter_Fieldguide.pdf");
+    expect(coverLetterPdfFilename("Brown Brothers & Harriman", "Alex Rivera")).toBe("Alex_CoverLetter_Brown_Brothers_Harriman.pdf");
   });
 });
 
