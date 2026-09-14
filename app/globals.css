@@ -1680,3 +1680,60 @@ input:focus, select:focus, textarea:focus { border-color: var(--ink); box-shadow
   .queue-decision { flex-wrap: wrap; }
   .queue-decision-spacer { display: none; }
 }
+
+/* Search profile: same language as Jobs — full-bleed header rule, mono uppercase labels,
+   flat #dcdcdc frames with 4px corners, dashed separators, olive accent. */
+.profile-page { background: #fcfdfd; }
+.profile-page .page-header { align-items: center; padding: 8px 0 28px; }
+.profile-page .page-header::after { left: calc(-1 * var(--page-padding-x, 32px)); right: calc(-1 * var(--page-padding-x, 32px)); }
+.profile-page .page-header > div > p:not(.eyebrow) { color: #6e6268; }
+.profile-page .button { min-height: 36px; border-radius: 4px; padding: 6px 12px; font-size: 14px; font-weight: 500; }
+.profile-page .button.small { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.profile-page .field label, .profile-page fieldset > legend { color: #6f6269; font-family: var(--font-metadata); font-size: 12px; font-weight: 500; line-height: 16px; text-transform: uppercase; }
+.profile-page .field label.check-label { color: #000; font-family: var(--font-interface); font-size: 14px; text-transform: none; }
+.profile-page .field small { color: #666e5b; font-size: 12px; line-height: 18px; }
+.profile-page input:not([type="checkbox"]), .profile-page select, .profile-page textarea { border: 1px solid #dcdcdc; border-radius: 4px; background-color: #fff; box-shadow: none; color: #000; font-size: 14px; line-height: 20px; }
+.profile-page input:focus, .profile-page select:focus, .profile-page textarea:focus { border-color: #505a41; box-shadow: 0 0 0 3px rgba(80, 90, 65, .14); }
+.profile-page input[type="checkbox"] { accent-color: #505a41; }
+.profile-page .jobs-search-snapshot { border-radius: 4px; }
+.profile-page .jobs-search-snapshot strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.profile-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 32px; align-items: start; }
+.profile-form { min-width: 0; }
+.profile-section { display: grid; gap: 18px; padding: 24px 0; background: top / 100% 1px no-repeat url('/assets/jobs-row-separator.svg'); }
+.profile-section:first-of-type { padding-top: 0; background-image: none; }
+.profile-section-intro { display: grid; gap: 4px; }
+.profile-section-intro > span { color: #878787; font-family: var(--font-metadata); font-size: 12px; line-height: 16px; }
+.profile-section-intro h2 { margin: 0; color: #000; font-size: var(--text-section); font-weight: 600; line-height: var(--line-section); }
+.profile-section-intro p { margin: 0; color: #6e6268; font-size: 14px; line-height: 20px; }
+.profile-choices { display: flex; flex-wrap: wrap; align-content: start; gap: 8px 16px; margin: 0; padding: 0; border: 0; }
+.profile-choices legend { width: 100%; margin-bottom: 8px; padding: 0; }
+.profile-form-actions { display: flex; justify-content: flex-end; padding-top: 18px; background: top / 100% 1px no-repeat url('/assets/jobs-row-separator.svg'); }
+
+.profile-truth { position: sticky; top: 0; display: grid; gap: 16px; min-width: 0; }
+.profile-panel { overflow: hidden; border: 1px solid #dcdcdc; border-radius: 4px; background: #fff; }
+.profile-panel-header { padding: 12px; background: #f6f6f6; border-left: 5px solid #505a41; }
+.profile-panel-header h2 { margin: 0; color: #000; font-family: var(--font-metadata); font-size: 12px; font-weight: 500; line-height: 16px; text-transform: uppercase; }
+.profile-panel-header p { margin: 4px 0 0; color: #6e6268; font-size: 12px; line-height: 16px; }
+.profile-panel-body { display: grid; gap: 12px; padding: 12px; }
+.profile-panel-body .button { justify-self: start; }
+.profile-panel .empty-state { margin: 12px; }
+.profile-facts { max-height: 60vh; overflow-y: auto; }
+.profile-fact { display: grid; gap: 6px; padding: 12px; background: top / 100% 1px no-repeat url('/assets/jobs-row-separator.svg'); }
+.profile-fact:first-child { background-image: none; }
+.profile-fact strong { color: #000; font-size: 14px; font-weight: 600; line-height: 20px; }
+.profile-fact p { margin: 0; color: #333; font-size: 14px; line-height: 20px; }
+.profile-fact-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; color: #878787; font-family: var(--font-metadata); font-size: 11px; line-height: 16px; text-transform: uppercase; }
+.profile-fact-meta .verified { color: #49688c; }
+.profile-fact-meta .unverified { color: #b94e38; }
+.profile-fact-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.profile-fact .tag { border: 1px solid #dcdcdc; border-radius: 2px; background: #f6f6f6; color: #333; font-size: 12px; }
+
+@media (max-width: 1180px) {
+  .profile-layout { grid-template-columns: 1fr; }
+  .profile-truth { position: static; }
+}
+@media (max-width: 720px) {
+  .profile-page .form-grid { grid-template-columns: 1fr; }
+  .profile-page .page-header { align-items: flex-start; flex-direction: column; }
+}

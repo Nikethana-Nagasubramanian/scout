@@ -405,7 +405,6 @@ export default async function JobsPage({ searchParams }: SearchProps) {
             <p>Select a run to see exactly what Scout checked and what happened to every result.</p>
           </div>
           <div className="inline-actions">
-            <Link className="text-link" href="/signals">View target companies</Link>
             <Link className="text-link" href="/sources">Manage sources</Link>
           </div>
         </div>

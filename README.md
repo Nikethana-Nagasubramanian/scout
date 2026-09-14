@@ -128,7 +128,7 @@ Set `OLLAMA_URL` if Ollama does not run on its default address.
 
 ## Gmail hiring signals
 
-Scout can read job alert email to surface companies showing hiring momentum, which appear on the Target companies page. Configure it with these environment variables:
+Scout can read job alert email to pull out specific roles and find new company job boards to check. Configure it with these environment variables:
 
 ```text
 SCOUT_GMAIL_ADDRESS
