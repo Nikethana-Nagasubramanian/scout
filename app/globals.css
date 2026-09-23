@@ -597,6 +597,173 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   to { opacity: 1; }
 }
 
+/* Job description drawer, anchored to the right edge */
+.job-drawer-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0 0 0 auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-left: 1px solid #d9d9d9;
+  background: #fff;
+  box-shadow: -24px 0 80px rgba(19, 23, 16, .22);
+  color: #181818;
+  font-family: "Geist Variable", ui-sans-serif, sans-serif;
+}
+.job-drawer-dialog[open] { animation: job-drawer-in 240ms ease-in-out both; }
+.job-drawer-dialog.is-closing { animation: job-drawer-out 180ms ease-in-out both; }
+.job-drawer-dialog::backdrop { background: rgba(25, 30, 21, .5); backdrop-filter: blur(2px); animation: manual-backdrop-in 240ms ease-in-out both; }
+.job-drawer { display: grid; grid-template-rows: auto 1fr auto; height: 100dvh; }
+.job-drawer-header {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px;
+}
+.job-drawer-header::after,
+.job-drawer-footer::before {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: center / 100% 1px no-repeat url('/assets/jobs-row-separator.svg');
+  content: "";
+}
+.job-drawer-eyebrow {
+  margin: 0 0 5px;
+  color: #6e6268;
+  font-family: "Geist Mono Variable", monospace;
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+.job-drawer-header h2 {
+  margin: 0;
+  color: #515b41;
+  font-family: "Young Serif", Georgia, serif;
+  font-size: var(--text-page);
+  font-weight: 400;
+  line-height: var(--line-page);
+}
+.job-drawer-header > div > p { margin: 6px 0 0; color: #6e6268; font-size: 14px; line-height: 20px; }
+.job-drawer-facts { font-family: "Geist Mono Variable", monospace; font-size: 12px; text-transform: uppercase; }
+.job-drawer-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 1px solid #dcdcdc;
+  border-radius: 4px;
+  background: #fcfdfd;
+  color: #6e6268;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.job-drawer-close:hover { background: #f1f1ef; color: #181818; }
+.job-drawer-body { overflow-y: auto; padding: 24px; }
+.job-drawer-body p { margin: 0 0 14px; color: #262626; font-size: 14px; line-height: 22px; }
+.job-drawer-body p:last-child { margin-bottom: 0; }
+.job-drawer-note { padding: 10px 12px; border-radius: 4px; background: #f1f4ec; color: #515b41 !important; font-size: 13px !important; }
+.job-drawer-note.is-caution { background: #fbf3e8; color: #7a5a2e !important; }
+.job-drawer-footer { position: relative; display: flex; align-items: center; gap: 10px; padding: 16px 24px; }
+.job-drawer-footer::before { top: 0; bottom: auto; }
+@keyframes job-drawer-in {
+  from { opacity: .4; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes job-drawer-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(24px); }
+}
+@media (max-width: 720px) {
+  /* Full-bleed sheet on phones: a 560px side panel leaves no room to read. */
+  .job-drawer-dialog { width: 100vw; border-left: 0; }
+  .job-drawer-header { padding: 16px; }
+  .job-drawer-body { padding: 16px; }
+  .job-drawer-footer { flex-wrap: wrap; padding: 12px 16px; }
+}
+
+/* Reject reason dropdown */
+.reject-menu { position: relative; }
+.reject-menu-trigger { display: inline-flex; align-items: center; gap: 6px; width: 100%; justify-content: center; }
+.reject-menu-caret { width: 0; height: 0; border-top: 4px solid currentColor; border-right: 4px solid transparent; border-left: 4px solid transparent; }
+.reject-menu-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 212px;
+  padding: 6px;
+  border: 1px solid #dcdcdc;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(19, 23, 16, .16);
+}
+.reject-menu-label {
+  margin: 4px 8px 8px;
+  color: #6e6268;
+  font-family: "Geist Mono Variable", monospace;
+  font-size: 11px;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+.reject-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #181818;
+  font-family: "Geist Variable", ui-sans-serif, sans-serif;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.reject-menu-item:hover { background: #f1f1ef; }
+
+/* Rules learned from rejections, Automation page */
+.learned-rules-card .card-body { display: flex; flex-direction: column; gap: 12px; }
+.learned-rules-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.learned-rules-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #dcdcdc;
+  border-radius: 6px;
+  background: #fcfdfd;
+}
+.learned-rules-list li > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.learned-rules-list strong { color: #181818; font-size: 14px; font-weight: 500; line-height: 19px; }
+.learned-rules-list small { color: #6e6268; font-size: 13px; line-height: 17px; }
+.learned-rules-list.is-dismissed li { background: #f6f6f4; opacity: .75; }
+.learned-rules-subhead {
+  margin: 4px 0 0;
+  color: #6e6268;
+  font-family: "Geist Mono Variable", monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.learned-rules-footnote { margin: 0; color: #6e6268; font-size: 13px; line-height: 19px; }
+@media (max-width: 720px) {
+  /* Stack the rule rows so the action never squeezes the label on a phone. */
+  .learned-rules-list li { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .learned-rules-list li form { width: 100%; }
+  .learned-rules-list li form button { width: 100%; }
+  .reject-menu-panel { right: auto; left: 0; min-width: 0; width: 100%; }
+}
+
 /* Jobs search and result rows, Paper direction */
 .page:has(.fetch-audit-card) .jobs-filter-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 24px; padding: 0; border: 0; }
 .page:has(.fetch-audit-card) .jobs-search-field { flex: 1 1 629px; min-width: 0; height: 36px; padding: 8px 10px; border: 1px solid #dcdcdc; border-radius: 4px; background: #fcfdfd; box-shadow: none; }
@@ -614,7 +781,11 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .jobs-result-row:not(:last-child)::after { position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: center / 100% 1px no-repeat url('/assets/jobs-row-separator.svg'); content: ""; }
 .jobs-result-primary { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
 .jobs-result-identity { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.jobs-result-identity > strong { overflow: hidden; color: #000; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 16px; font-weight: 500; line-height: 20.8px; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-result-identity > strong,
+.jobs-result-identity > .jobs-result-title { overflow: hidden; color: #000; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 16px; font-weight: 500; line-height: 20.8px; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-result-identity > .jobs-result-title { width: fit-content; max-width: 100%; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.jobs-result-identity > .jobs-result-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.jobs-result-identity > .jobs-result-title:focus-visible { outline: 2px solid #515b41; outline-offset: 2px; }
 .jobs-result-identity > span { display: flex; align-items: center; gap: 10px; color: #686868; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 14px; line-height: 18.2px; }
 .jobs-result-identity i { width: 3px; height: 3px; background: center / 3px 3px no-repeat url('/assets/jobs-meta-dot.svg'); }
 .jobs-result-match { display: flex; align-items: center; gap: 12px; }

@@ -19,3 +19,6 @@ dist/
 # Local QA screenshots can contain real resume and contact details
 artifacts/
 design-qa-*.png
+
+# Python venv for agent experiments
+.venv/

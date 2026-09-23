@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runWorkflowAction, saveSettingsAction } from "@/app/actions";
+import Link from "next/link";
+import { dismissRejectionRuleAction, restoreRejectionRuleAction, runWorkflowAction, saveSettingsAction } from "@/app/actions";
 import { PageHeader, StatusPill } from "@/components/UI";
 import { WorkflowSubmitButton } from "@/components/WorkflowSubmitButton";
 import { getSetting } from "@/lib/database";
 import { aiProvider, anthropicConfigured, DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
+import { learnedRejectionRules, ruleHeadline } from "@/lib/rejection-learning";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,9 @@ export default async function SettingsPage() {
   const selectedClaudeModel = getSetting("anthropic_model", DEFAULT_ANTHROPIC_MODEL);
   const installedModels = await installedOllamaModels();
   const modelOptions = installedModels.includes(selectedModel) ? installedModels : [selectedModel, ...installedModels];
+  const activeRules = learnedRejectionRules();
+  const activeRuleKeys = new Set(activeRules.map((rule) => `${rule.kind}:${rule.value}`));
+  const dismissedRules = learnedRejectionRules(true).filter((rule) => !activeRuleKeys.has(`${rule.kind}:${rule.value}`));
 
   return (
     <div className="page narrow">
@@ -174,6 +179,62 @@ export default async function SettingsPage() {
 
         <div className="form-actions"><button className="button" type="submit">Save workflow settings</button></div>
       </form>
+
+      <div className="spacer" />
+      <section className="card learned-rules-card">
+        <div className="card-header">
+          <div>
+            <h2>Learned from your rejections</h2>
+            <p>Scout inferred these from the reasons you gave when rejecting roles. They are not settings you chose, and turning one off never deletes a rejection.</p>
+          </div>
+        </div>
+        <div className="card-body">
+          {activeRules.length ? (
+            <ul className="learned-rules-list">
+              {activeRules.map((rule) => (
+                <li key={`${rule.kind}:${rule.value}`}>
+                  <div>
+                    <strong>{ruleHeadline(rule)}</strong>
+                    <small>Learned from {rule.rejectionCount} {rule.rejectionCount === 1 ? "rejection" : "rejections"}</small>
+                  </div>
+                  <form action={dismissRejectionRuleAction}>
+                    <input type="hidden" name="kind" value={rule.kind} />
+                    <input type="hidden" name="value" value={rule.value} />
+                    <button className="button ghost small" type="submit">Turn off</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">No rules yet. Reject a few roles with a reason and Scout will start hiding roles like them.</p>
+          )}
+          {dismissedRules.length ? (
+            <>
+              <p className="learned-rules-subhead">Turned off</p>
+              <ul className="learned-rules-list is-dismissed">
+                {dismissedRules.map((rule) => (
+                  <li key={`${rule.kind}:${rule.value}`}>
+                    <div>
+                      <strong>{ruleHeadline(rule)}</strong>
+                      <small>Not hiding anything</small>
+                    </div>
+                    <form action={restoreRejectionRuleAction}>
+                      <input type="hidden" name="kind" value={rule.kind} />
+                      <input type="hidden" name="value" value={rule.value} />
+                      <button className="button ghost small" type="submit">Turn back on</button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {activeRules.length ? (
+            <p className="learned-rules-footnote">
+              Roles these rules catch are moved to <Link className="text-link" href="/jobs?fit=removed">Removed</Link>, each labelled with the rule that caught it. Nothing is deleted.
+            </p>
+          ) : null}
+        </div>
+      </section>
 
       <div className="spacer" />
       <section className="card">

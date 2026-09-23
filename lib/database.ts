@@ -228,6 +228,25 @@ db.exec(`
     UNIQUE(source_id, external_id)
   );
 
+  CREATE TABLE IF NOT EXISTS job_rejections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    company TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE INDEX IF NOT EXISTS job_rejections_job_index ON job_rejections(job_id);
+
+  CREATE TABLE IF NOT EXISTS rejection_rule_overrides (
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (kind, value)
+  );
+
   CREATE INDEX IF NOT EXISTS jobs_score_index ON jobs(score DESC);
   CREATE INDEX IF NOT EXISTS jobs_status_index ON jobs(status);
   CREATE INDEX IF NOT EXISTS jobs_seen_index ON jobs(first_seen_at DESC);

@@ -10,6 +10,7 @@ import { searchContactForJob } from "@/lib/contact-research";
 import { createResumeVersion } from "@/lib/resume";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
 import { extractResumeText, MAX_RESUME_BYTES, seedFactsFromResume } from "@/lib/resume-import";
+import { dismissLearnedRule, isRejectionReason, recordJobRejection, restoreLearnedRule, type RuleKind } from "@/lib/rejection-learning";
 import type { ResumeContent } from "@/lib/types";
 import { toJsonList } from "@/lib/utils";
 
@@ -298,6 +299,37 @@ export async function updateJobStatusAction(formData: FormData): Promise<void> {
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${id}`);
   revalidatePath("/queue");
+}
+
+/** Reject with a reason, so the rejection can teach a rule instead of vanishing. */
+export async function rejectJobAction(formData: FormData): Promise<void> {
+  const id = Number(text(formData, "id"));
+  const reason = text(formData, "reason");
+  if (!Number.isFinite(id) || !isRejectionReason(reason)) return;
+  recordJobRejection(id, reason);
+  db.prepare("UPDATE jobs SET status = 'irrelevant' WHERE id = ?").run(id);
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${id}`);
+  revalidatePath("/queue");
+  revalidatePath("/settings");
+}
+
+export async function dismissRejectionRuleAction(formData: FormData): Promise<void> {
+  const kind = text(formData, "kind");
+  const value = text(formData, "value");
+  if (!["company", "seniority", "location", "role_type"].includes(kind) || !value) return;
+  dismissLearnedRule(kind as RuleKind, value);
+  revalidatePath("/jobs");
+  revalidatePath("/settings");
+}
+
+export async function restoreRejectionRuleAction(formData: FormData): Promise<void> {
+  const kind = text(formData, "kind");
+  const value = text(formData, "value");
+  if (!["company", "seniority", "location", "role_type"].includes(kind) || !value) return;
+  restoreLearnedRule(kind as RuleKind, value);
+  revalidatePath("/jobs");
+  revalidatePath("/settings");
 }
 
 export async function restoreJobEligibilityAction(formData: FormData): Promise<void> {

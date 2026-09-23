@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { enrichJobDescription } from "@/lib/job-description";
 import { describeAiFailure, providerChain, providerLabel, runStructuredPrompt, type AiProvider } from "@/lib/llm";
 import type { Job, ResumeContent } from "@/lib/types";
 
@@ -156,70 +157,13 @@ export function deterministicCoverLetter(job: Job, content: ResumeContent, candi
   };
 }
 
-function safeLiveUrl(value: string): URL | null {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    if (url.protocol !== "https:") return null;
-    if (
-      host === "localhost"
-      || host.endsWith(".local")
-      || /^127\./.test(host)
-      || /^10\./.test(host)
-      || /^192\.168\./.test(host)
-      || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host)
-    ) return null;
-    return url;
-  } catch {
-    return null;
-  }
-}
-
-function decodeHtml(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
-}
-
-function jobPostingDescription(html: string): string {
-  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
-    try {
-      const parsed = JSON.parse(decodeHtml(match[1])) as Record<string, unknown> | Array<Record<string, unknown>>;
-      const candidates = Array.isArray(parsed) ? parsed : [parsed];
-      const posting = candidates.find((candidate) => candidate["@type"] === "JobPosting");
-      if (posting && typeof posting.description === "string") return cleanText(decodeHtml(posting.description));
-    } catch {
-      continue;
-    }
-  }
-  return cleanText(decodeHtml(html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")));
-}
-
+/**
+ * Live posting fetch now lives in lib/job-description so the Jobs drawer shares it.
+ * Cover letters accept the raw-HTML fallback too: the text is only read once, in a
+ * prompt that must cite verified resume evidence anyway, and is never stored.
+ */
 export async function enrichCoverLetterJob(job: Job): Promise<Job> {
-  if (cleanText(job.description).length >= 1_500) return job;
-  const url = safeLiveUrl(job.canonical_url || job.apply_url);
-  if (!url) return job;
-  try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": "Scout local job search copilot" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return job;
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html") && !contentType.includes("application/json")) return job;
-    const liveDescription = jobPostingDescription((await response.text()).slice(0, 750_000));
-    if (liveDescription.length <= cleanText(job.description).length) return job;
-    return { ...job, description: liveDescription.slice(0, 24_000) };
-  } catch {
-    return job;
-  }
+  return (await enrichJobDescription(job)).job;
 }
 
 function parseContent(value: string): string {

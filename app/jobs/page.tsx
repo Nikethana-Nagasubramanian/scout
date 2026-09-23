@@ -1,6 +1,9 @@
 import Link from "next/link";
-import { approveJobAction, restoreJobEligibilityAction, runWorkflowAction, updateJobStatusAction } from "@/app/actions";
+import { approveJobAction, restoreJobEligibilityAction, runWorkflowAction } from "@/app/actions";
+import { JobDrawer, JobTitleButton } from "@/components/JobDrawer";
 import { ManualJobModal } from "@/components/ManualJobModal";
+import { RejectMenu } from "@/components/RejectMenu";
+import { describeRule, learnedRejectionRules, matchingRule, type LearnedRule } from "@/lib/rejection-learning";
 import { QueueToast } from "@/components/QueueToast";
 import { Button, PageHeader, StatusPill } from "@/components/UI";
 import { ResumeSubmitButton } from "@/components/ResumeSubmitButton";
@@ -149,6 +152,7 @@ function fetchGroupResourceKey(group: FetchSourceGroup): FetchResourceKey {
 }
 
 interface JobListRow extends Job {
+  eligibility_override: number | null;
   source_origin_name: string | null;
   source_origin_url: string | null;
   latest_resume_id: number | null;
@@ -363,13 +367,26 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   `).all(...(listRun ? [listRun.id, ...values] : values)) as JobListRow[];
   // Every count on the page comes from this one partition, so the headline and tabs always agree.
   const relevantJobs = savedJobs.filter((job) => matchesTargetRole(job.title, job.description, targetTitles));
+  // Rules learned from past rejections demote rather than delete: a suppressed role moves
+  // to Removed carrying the rule that caught it, so the filtering is always answerable.
+  const learnedRules = learnedRejectionRules();
+  const suppressedRules = new Map<number, LearnedRule>();
+  for (const job of relevantJobs) {
+    // An explicit restore always wins over a learned rule.
+    if (["irrelevant", "dismissed"].includes(job.status) || job.eligibility_override) continue;
+    const rule = matchingRule(job, learnedRules);
+    if (rule) suppressedRules.set(job.id, rule);
+  }
+  const segmentFor = (job: JobListRow): Exclude<FitSegment, "all"> => (
+    suppressedRules.has(job.id) ? "removed" : fitSegmentFor(job)
+  );
   const segmentCounts: Record<FitSegment, number> = { all: 0, eligible: 0, needs_verification: 0, removed: 0 };
   for (const job of relevantJobs) {
-    const segment = fitSegmentFor(job);
+    const segment = segmentFor(job);
     segmentCounts[segment] += 1;
     if (segment !== "removed") segmentCounts.all += 1;
   }
-  const segmentJobs = relevantJobs.filter((job) => (fit === "all" ? fitSegmentFor(job) !== "removed" : fitSegmentFor(job) === fit));
+  const segmentJobs = relevantJobs.filter((job) => (fit === "all" ? segmentFor(job) !== "removed" : segmentFor(job) === fit));
   const jobs = segmentJobs.slice(0, JOB_LIST_LIMIT);
   const resultFoundCount = selectedRunMetrics?.relevant ?? relevantJobs.length;
   const resultSourceCount = accountedResourceCount || resourceAudits.length;
@@ -378,12 +395,13 @@ export default async function JobsPage({ searchParams }: SearchProps) {
     all: "Eligible roles and roles that need a quick check, best matches first.",
     eligible: `${segmentCounts.eligible} with no eligibility conflicts.`,
     needs_verification: `${segmentCounts.needs_verification} that look right but have something to confirm, like sponsorship or location.`,
-    removed: `${segmentCounts.removed} removed by you or by Scout's filters. Restore any that were removed by mistake.`,
+    removed: `${segmentCounts.removed} removed by you, by Scout's filters, or by a rule learned from your rejections. Restore any that were removed by mistake.`,
   }[fit];
 
   return (
     <div className="page jobs-page">
       <QueueToast />
+      <JobDrawer />
       <PageHeader title="Jobs" description="Fetch, review, and decide which opportunities deserve your time.">
         <ManualJobModal />
         <form action={runWorkflowAction}>
@@ -563,14 +581,17 @@ export default async function JobsPage({ searchParams }: SearchProps) {
             const isApplied = Boolean(job.application_applied_at);
             const isDuplicate = job.duplicate_of_job_id !== null;
             const isManuallyRejected = ["irrelevant", "dismissed"].includes(job.status);
-            const isRemoved = !isApplied && !isDuplicate && (classification === "filtered" || isManuallyRejected);
+            const suppressedRule = suppressedRules.get(job.id);
+            const isRemoved = !isApplied && !isDuplicate && (classification === "filtered" || isManuallyRejected || Boolean(suppressedRule));
             const removalReason = isManuallyRejected
               ? "You rejected this role."
-              : reasons[0] ? `Rejected by Scout: ${reasons[0]}` : "Rejected by Scout.";
+              : suppressedRule
+                ? describeRule(suppressedRule)
+                : reasons[0] ? `Rejected by Scout: ${reasons[0]}` : "Rejected by Scout.";
             return <article className="jobs-result-row" key={job.id}>
               <div className="jobs-result-primary">
                 <div className="jobs-result-identity">
-                  <strong>{job.title}</strong>
+                  <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
                   <span>{job.company}<i aria-hidden="true" />{job.location || "Not specified"}</span>
                 </div>
                 <div className="jobs-result-match"><strong>{job.score}%</strong><span>Profile match</span></div>
@@ -585,7 +606,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                   </>
                 ) : isRemoved ? (
                   <>
-                    <StatusPill status={isManuallyRejected ? "manually_removed" : "removed"} />
+                    <StatusPill status={isManuallyRejected || suppressedRule ? "manually_removed" : "removed"} />
                     <p>{removalReason}</p>
                   </>
                 ) : (
@@ -617,13 +638,7 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                       </ResumeSubmitButton>
                     </form>
                   )}
-                  {!isApplied && !isDuplicate && !isRemoved ? (
-                    <form action={updateJobStatusAction}>
-                      <input type="hidden" name="id" value={job.id} />
-                      <input type="hidden" name="status" value="irrelevant" />
-                      <Button variant="ghost" size="small" className="danger-text" type="submit">Reject</Button>
-                    </form>
-                  ) : null}
+                  {!isApplied && !isDuplicate && !isRemoved ? <RejectMenu jobId={job.id} /> : null}
               </div>
             </article>;
           })}
