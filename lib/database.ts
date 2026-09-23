@@ -228,6 +228,24 @@ db.exec(`
     UNIQUE(source_id, external_id)
   );
 
+  CREATE TABLE IF NOT EXISTS eligibility_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    quote TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    quote_verified INTEGER NOT NULL DEFAULT 0,
+    reasoning TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    pages_read INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_id, question)
+  );
+
+  CREATE INDEX IF NOT EXISTS eligibility_findings_status_index ON eligibility_findings(status);
+
   CREATE TABLE IF NOT EXISTS job_rejections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

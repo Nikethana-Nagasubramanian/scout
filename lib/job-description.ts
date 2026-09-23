@@ -15,7 +15,7 @@ export function cleanDescriptionText(value: string): string {
 }
 
 /** Only https, and never a private host: these URLs come from third-party feeds. */
-function safeLiveUrl(value: string): URL | null {
+export function safeLiveUrl(value: string): URL | null {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
