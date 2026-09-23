@@ -3,6 +3,7 @@ import { approveJobAction, restoreJobEligibilityAction, runWorkflowAction } from
 import { JobDrawer, JobTitleButton } from "@/components/JobDrawer";
 import { ManualJobModal } from "@/components/ManualJobModal";
 import { EligibilityFindingCard } from "@/components/EligibilityFindingCard";
+import { FilterSelect } from "@/components/FilterSelect";
 import { RejectMenu } from "@/components/RejectMenu";
 import { proposedFindingsByJob } from "@/lib/eligibility-research";
 import { describeRule, learnedRejectionRules, matchingRule, type LearnedRule } from "@/lib/rejection-learning";
@@ -21,8 +22,17 @@ import { requireProfile } from "@/lib/resume-import";
 export const dynamic = "force-dynamic";
 
 interface SearchProps {
-  searchParams: Promise<{ q?: string; fit?: string; run?: string; source?: string }>;
+  searchParams: Promise<{ q?: string; fit?: string; run?: string; source?: string; visa?: string }>;
 }
+
+/** Visa status is independent of eligibility, so it filters across the tabs, not beside them. */
+type VisaFilter = "any" | "sponsors" | "unstated";
+
+const VISA_FILTERS: ReadonlyArray<{ value: VisaFilter; label: string }> = [
+  { value: "any", label: "Any visa status" },
+  { value: "sponsors", label: "Sponsors visas" },
+  { value: "unstated", label: "Visa not stated" },
+];
 
 type FitSegment = "all" | "eligible" | "needs_verification" | "removed";
 
@@ -195,9 +205,14 @@ export default async function JobsPage({ searchParams }: SearchProps) {
         WHERE collection_runs.id = ?
       `).get(runId) as RunSummary | undefined
     : undefined;
-  const listRun = query ? undefined : run;
+  // The list is normally scoped to one fetch. Searching or filtering by visa status is a
+  // question about every saved role, so those drop the run scope.
+  const listRun = query || (parameters.visa && parameters.visa !== "any") ? undefined : run;
   const fit: FitSegment = FIT_SEGMENTS.some((segment) => segment.value === parameters.fit) ? parameters.fit as FitSegment : "all";
   const source = parameters.source || "all";
+  const visa: VisaFilter = VISA_FILTERS.some((option) => option.value === parameters.visa)
+    ? parameters.visa as VisaFilter
+    : "any";
   const fetchHistory = db.prepare(`
     SELECT collection_runs.id, collection_runs.slot, collection_runs.started_at,
       collection_runs.completed_at, collection_runs.status, collection_runs.jobs_found,
@@ -369,7 +384,15 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       first_seen_at DESC
   `).all(...(listRun ? [listRun.id, ...values] : values)) as JobListRow[];
   // Every count on the page comes from this one partition, so the headline and tabs always agree.
-  const relevantJobs = savedJobs.filter((job) => matchesTargetRole(job.title, job.description, targetTitles));
+  const relevantJobs = savedJobs
+    .filter((job) => matchesTargetRole(job.title, job.description, targetTitles))
+    .filter((job) => (
+      visa === "any"
+        ? true
+        : visa === "sponsors"
+          ? job.sponsorship_status === "sponsors"
+          : (job.sponsorship_status || "unstated") === "unstated"
+    ));
   // Rules learned from past rejections demote rather than delete: a suppressed role moves
   // to Removed carrying the rule that caught it, so the filtering is always answerable.
   const eligibilityFindings = proposedFindingsByJob();
@@ -423,7 +446,12 @@ export default async function JobsPage({ searchParams }: SearchProps) {
       </section>
       <section className="jobs-results-summary" aria-label="Job collection summary">
         <h2>{query ? `${segmentJobs.length} ${segmentJobs.length === 1 ? "role matches" : "roles match"} "${query}"` : `Showing ${worthCount} ${worthCount === 1 ? "role" : "roles"} worth your time`}</h2>
-        <p>{segmentDescription}{segmentJobs.length > jobs.length ? ` Showing the top ${jobs.length}.` : ""}</p>
+        <p>
+          {segmentDescription}
+          {visa === "sponsors" ? " Limited to postings that say sponsorship is available." : ""}
+          {visa === "unstated" ? " Limited to postings that never mention sponsorship." : ""}
+          {segmentJobs.length > jobs.length ? ` Showing the top ${jobs.length}.` : ""}
+        </p>
       </section>
       <section className="card fetch-audit-card" aria-label="Recent fetches">
         <div className="fetch-audit-header">
@@ -554,6 +582,13 @@ export default async function JobsPage({ searchParams }: SearchProps) {
           <span className="jobs-search-icon" aria-hidden="true" />
           <input type="search" name="q" defaultValue={query} placeholder="Search all saved jobs by title, company, or description" aria-label="Search all saved jobs" />
         </label>
+        <FilterSelect
+          id="jobs-visa-filter"
+          label="Visa status"
+          name="visa"
+          options={VISA_FILTERS}
+          value={visa}
+        />
         <div className="jobs-fit-segments" role="group" aria-label="Role status filter">
           {FIT_SEGMENTS.map((segment) => (
             <button className={fit === segment.value ? "active" : ""} name="fit" value={segment.value} type="submit" key={segment.value}>{segment.label} <span className="queue-segment-count">{segmentCounts[segment.value]}</span></button>
@@ -608,7 +643,10 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                   <span className="visa-chip sponsors" title="The posting says visa sponsorship is available">Sponsors visas</span>
                 ) : job.sponsorship_status === "no_sponsorship" ? (
                   <span className="visa-chip none" title="The posting says visa sponsorship is not available">No sponsorship</span>
-                ) : null}
+                ) : (
+                  // Unknown has to look different from fine, or silence reads as approval.
+                  <span className="visa-chip unstated" title="The posting does not mention visa sponsorship either way">Visa not stated</span>
+                )}
                 {isApplied ? (
                   <StatusPill status="applied" />
                 ) : isDuplicate ? (

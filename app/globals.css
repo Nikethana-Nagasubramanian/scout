@@ -706,6 +706,7 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 }
 .visa-chip.sponsors { border-color: #c3d0ad; background: #f1f4ec; color: #4a5639; }
 .visa-chip.none { border-color: #e6c5b8; background: #fdf3ef; color: #8f3f28; }
+.visa-chip.unstated { border-color: #dcdcdc; background: #f6f6f4; color: #6e6268; }
 
 /* Eligibility research findings, shown as a proposal on the job row */
 .jobs-result-row.has-finding { row-gap: 16px; }
