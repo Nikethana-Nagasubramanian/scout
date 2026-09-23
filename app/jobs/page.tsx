@@ -2,7 +2,9 @@ import Link from "next/link";
 import { approveJobAction, restoreJobEligibilityAction, runWorkflowAction } from "@/app/actions";
 import { JobDrawer, JobTitleButton } from "@/components/JobDrawer";
 import { ManualJobModal } from "@/components/ManualJobModal";
+import { EligibilityFindingCard } from "@/components/EligibilityFindingCard";
 import { RejectMenu } from "@/components/RejectMenu";
+import { proposedFindingsByJob } from "@/lib/eligibility-research";
 import { describeRule, learnedRejectionRules, matchingRule, type LearnedRule } from "@/lib/rejection-learning";
 import { QueueToast } from "@/components/QueueToast";
 import { Button, PageHeader, StatusPill } from "@/components/UI";
@@ -369,6 +371,9 @@ export default async function JobsPage({ searchParams }: SearchProps) {
   const relevantJobs = savedJobs.filter((job) => matchesTargetRole(job.title, job.description, targetTitles));
   // Rules learned from past rejections demote rather than delete: a suppressed role moves
   // to Removed carrying the rule that caught it, so the filtering is always answerable.
+  const eligibilityFindings = proposedFindingsByJob();
+  const sponsorshipRequired = Boolean((db.prepare("SELECT sponsorship_required FROM candidate_profile WHERE id = 1")
+    .get() as { sponsorship_required: number } | undefined)?.sponsorship_required);
   const learnedRules = learnedRejectionRules();
   const suppressedRules = new Map<number, LearnedRule>();
   for (const job of relevantJobs) {
@@ -588,7 +593,8 @@ export default async function JobsPage({ searchParams }: SearchProps) {
               : suppressedRule
                 ? describeRule(suppressedRule)
                 : reasons[0] ? `Rejected by Scout: ${reasons[0]}` : "Rejected by Scout.";
-            return <article className="jobs-result-row" key={job.id}>
+            const finding = eligibilityFindings.get(job.id);
+            return <article className={`jobs-result-row${finding ? " has-finding" : ""}`} key={job.id}>
               <div className="jobs-result-primary">
                 <div className="jobs-result-identity">
                   <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
@@ -640,6 +646,9 @@ export default async function JobsPage({ searchParams }: SearchProps) {
                   )}
                   {!isApplied && !isDuplicate && !isRemoved ? <RejectMenu jobId={job.id} /> : null}
               </div>
+              {finding ? (
+                <EligibilityFindingCard finding={finding} sponsorshipRequired={sponsorshipRequired} />
+              ) : null}
             </article>;
           })}
         </div> : (

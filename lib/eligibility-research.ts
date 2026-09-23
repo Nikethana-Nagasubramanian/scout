@@ -330,6 +330,54 @@ export function saveEligibilityFinding(finding: EligibilityFinding): void {
   );
 }
 
+export interface ProposedFinding {
+  id: number;
+  job_id: number;
+  question: EligibilityQuestion;
+  verdict: EligibilityVerdict;
+  quote: string;
+  source_url: string;
+  quote_verified: number;
+  reasoning: string;
+  model: string;
+  pages_read: number;
+}
+
+/** Only findings that actually say something: an "unknown" is not worth a decision. */
+export function proposedFindingsByJob(): Map<number, ProposedFinding> {
+  const rows = db.prepare(`
+    SELECT id, job_id, question, verdict, quote, source_url, quote_verified, reasoning, model, pages_read
+    FROM eligibility_findings
+    WHERE status = 'proposed' AND verdict != 'unknown'
+    ORDER BY id
+  `).all() as ProposedFinding[];
+  return new Map(rows.map((row) => [row.job_id, row]));
+}
+
+export function findingById(id: number): ProposedFinding | undefined {
+  return db.prepare(`
+    SELECT id, job_id, question, verdict, quote, source_url, quote_verified, reasoning, model, pages_read
+    FROM eligibility_findings WHERE id = ?
+  `).get(id) as ProposedFinding | undefined;
+}
+
+export function setFindingStatus(id: number, status: "accepted" | "dismissed"): void {
+  db.prepare("UPDATE eligibility_findings SET status = ? WHERE id = ?").run(status, id);
+}
+
+/** Plain-language summary of what a verdict means for this candidate. */
+export function describeVerdict(verdict: EligibilityVerdict, sponsorshipRequired: boolean): string {
+  if (verdict === "sponsors") return "This employer sponsors visas.";
+  if (verdict === "us_work_authorization_required") {
+    return sponsorshipRequired
+      ? "This role needs existing US work authorization, which rules it out for you."
+      : "This role needs existing US work authorization.";
+  }
+  if (verdict === "clearance_required") return "This role requires a US security clearance.";
+  if (verdict === "no_clearance_required") return "No security clearance is required.";
+  return "No explicit policy was found.";
+}
+
 /** Jobs still waiting on this question, best-scoring first. */
 export function jobsNeedingEligibilityResearch(limit: number, question: EligibilityQuestion = "us_eligibility"): Job[] {
   return db.prepare(`

@@ -12,6 +12,7 @@ import { createResumeVersion } from "@/lib/resume";
 import { ensureResumeBlockIds } from "@/lib/resume-blocks";
 import { extractResumeText, MAX_RESUME_BYTES, seedFactsFromResume } from "@/lib/resume-import";
 import { dismissLearnedRule, isRejectionReason, recordJobRejection, restoreLearnedRule, type RuleKind } from "@/lib/rejection-learning";
+import { findingById, setFindingStatus } from "@/lib/eligibility-research";
 import type { ResumeContent } from "@/lib/types";
 import { toJsonList } from "@/lib/utils";
 
@@ -331,6 +332,42 @@ export async function restoreRejectionRuleAction(formData: FormData): Promise<vo
   restoreLearnedRule(kind as RuleKind, value);
   revalidatePath("/jobs");
   revalidatePath("/settings");
+}
+
+/**
+ * Applying a research finding is the only point where it changes anything. The agent
+ * proposes; this is the user accepting, and it is what moves the job.
+ */
+export async function acceptEligibilityFindingAction(formData: FormData): Promise<void> {
+  const id = Number(text(formData, "finding_id"));
+  if (!Number.isFinite(id)) return;
+  const finding = findingById(id);
+  if (!finding) return;
+
+  const profile = db.prepare("SELECT sponsorship_required FROM candidate_profile WHERE id = 1")
+    .get() as { sponsorship_required: number } | undefined;
+  const blocked = Boolean(profile?.sponsorship_required)
+    && ["us_work_authorization_required", "clearance_required"].includes(finding.verdict);
+
+  if (blocked) {
+    db.prepare("UPDATE jobs SET eligibility_status = 'filtered', eligibility_override = 0 WHERE id = ?").run(finding.job_id);
+  } else {
+    db.prepare("UPDATE jobs SET eligibility_status = 'eligible', eligibility_override = 1 WHERE id = ?").run(finding.job_id);
+  }
+  setFindingStatus(id, "accepted");
+  syncRunEligibility();
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${finding.job_id}`);
+}
+
+export async function dismissEligibilityFindingAction(formData: FormData): Promise<void> {
+  const id = Number(text(formData, "finding_id"));
+  if (!Number.isFinite(id)) return;
+  const finding = findingById(id);
+  if (!finding) return;
+  setFindingStatus(id, "dismissed");
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${finding.job_id}`);
 }
 
 export async function restoreJobEligibilityAction(formData: FormData): Promise<void> {
