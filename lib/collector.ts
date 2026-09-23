@@ -34,6 +34,7 @@ import {
   type JobFitPreferences,
 } from "@/lib/job-fit";
 import { buildConfidenceSummary, buildMatchSummary, scoreJob, scorePostingConfidence } from "@/lib/scoring";
+import { sponsorshipFromPosting } from "@/lib/sponsorship-text";
 import type {
   CandidateProfile,
   CompanyDiscoverySource,
@@ -1281,6 +1282,13 @@ async function runCompanyDiscoverySource(runId: number, source: CompanyDiscovery
   return { boardsAdded: discovered, directJobs };
 }
 
+/** Read from the posting on every scoring pass, so an enriched description updates the label. */
+function sponsorshipLabel(description: string): string {
+  const stated = sponsorshipFromPosting(description);
+  if (!stated) return "unstated";
+  return stated.verdict === "sponsors" ? "sponsors" : "no_sponsorship";
+}
+
 export function scoreAllJobs(): void {
   const profile = db.prepare("SELECT * FROM candidate_profile WHERE id = 1").get() as CandidateProfile;
   const fitPreferences = currentFitPreferences();
@@ -1290,7 +1298,8 @@ export function scoreAllJobs(): void {
     SET score = ?, hard_filter_pass = ?,
       eligibility_status = CASE WHEN eligibility_override = 1 THEN eligibility_status ELSE ? END,
       score_breakdown = ?, match_summary = ?,
-      confidence_score = ?, confidence_breakdown = ?, confidence_summary = ?
+      confidence_score = ?, confidence_breakdown = ?, confidence_summary = ?,
+      sponsorship_status = ?
     WHERE id = ?
   `);
   const transaction = db.transaction(() => {
@@ -1318,6 +1327,7 @@ export function scoreAllJobs(): void {
         confidence.total,
         JSON.stringify(confidence),
         buildConfidenceSummary(confidence),
+        sponsorshipLabel(job.description),
         job.id,
       );
     }

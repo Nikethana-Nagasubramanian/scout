@@ -412,6 +412,7 @@ ensureColumn("jobs", "duplicate_of_job_id", "INTEGER REFERENCES jobs(id) ON DELE
 ensureColumn("jobs", "duplicate_reason", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("jobs", "eligibility_status", "TEXT NOT NULL DEFAULT 'needs_verification'");
 ensureColumn("jobs", "eligibility_override", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("jobs", "sponsorship_status", "TEXT NOT NULL DEFAULT 'unstated'");
 ensureColumn("collection_job_results", "classification", "TEXT NOT NULL DEFAULT 'needs_verification'");
 ensureColumn("job_sources", "cooldown_until", "TEXT");
 ensureColumn("job_sources", "last_attempt_at", "TEXT");

@@ -11,6 +11,7 @@ describe("sponsorshipFromPosting", () => {
     "Visa sponsorship is not offered.",
     "Note: Visa sponsorship is not available for this role.",
     "Candidates must be authorized to work in the US without visa sponsorship.",
+    "Applicants must work without sponsorship.",
   ];
 
   it.each(refusals)("reads a refusal: %s", (text) => {

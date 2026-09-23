@@ -155,6 +155,7 @@ function fetchGroupResourceKey(group: FetchSourceGroup): FetchResourceKey {
 
 interface JobListRow extends Job {
   eligibility_override: number | null;
+  sponsorship_status: string | null;
   source_origin_name: string | null;
   source_origin_url: string | null;
   latest_resume_id: number | null;
@@ -597,7 +598,14 @@ export default async function JobsPage({ searchParams }: SearchProps) {
             return <article className={`jobs-result-row${finding ? " has-finding" : ""}`} key={job.id}>
               <div className="jobs-result-primary">
                 <div className="jobs-result-identity">
-                  <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
+                  <div className="jobs-result-title-row">
+                    <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
+                    {job.sponsorship_status === "sponsors" ? (
+                      <span className="visa-chip sponsors" title="The posting says visa sponsorship is available">Sponsors visas</span>
+                    ) : job.sponsorship_status === "no_sponsorship" ? (
+                      <span className="visa-chip none" title="The posting says visa sponsorship is not available">No sponsorship</span>
+                    ) : null}
+                  </div>
                   <span>{job.company}<i aria-hidden="true" />{job.location || "Not specified"}</span>
                 </div>
                 <div className="jobs-result-match"><strong>{job.score}%</strong><span>Profile match</span></div>

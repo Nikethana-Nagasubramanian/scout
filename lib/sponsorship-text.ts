@@ -1,4 +1,16 @@
-import { cleanDescriptionText } from "@/lib/job-description";
+/**
+ * Deliberately dependency-free. Scoring imports this, and reaching for the shared text
+ * helper in lib/job-description pulls in the database module, which imports job-fit,
+ * which imports this file - a cycle that fails at import time rather than at runtime.
+ */
+function stripMarkup(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/—/g, "-")
+    .replace(/–/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
  * Most postings that have a sponsorship policy simply say so, in a handful of stock
@@ -38,10 +50,22 @@ function sentences(text: string): string[] {
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, "\"")
     .replace(/&#39;|&apos;|&rsquo;/gi, "'");
-  return cleanDescriptionText(decoded)
+  return stripMarkup(decoded)
     .split(/(?<=[.!?])\s+|\s*[|•]\s*|\s{2,}/)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
+}
+
+/**
+ * "Sponsored life insurance" is a benefit; "applicants must work without sponsorship" is a
+ * policy. Both mention sponsorship, so the sentence has to name an immigration term or
+ * otherwise read as being about employing this person.
+ */
+const IMMIGRATION_WORDS = /\b(?:visa|h-?1b|work(?:ing)? (?:authorization|authorisation|permit)|immigration|employment authorization)\b/i;
+const EMPLOYMENT_WORDS = /\b(?:applicants?|candidates?|employment|hire[ds]?|hiring|work|role|position)\b/i;
+
+function hasEmploymentContext(sentence: string): boolean {
+  return IMMIGRATION_WORDS.test(sentence) || EMPLOYMENT_WORDS.test(sentence);
 }
 
 const QUOTE_CHARS = 240;
@@ -63,7 +87,7 @@ function quoteAround(sentence: string, marker: RegExp): string {
 export function sponsorshipFromPosting(description: string): SponsorshipStatement | null {
   for (const sentence of sentences(description)) {
     if (!/\bsponsor/i.test(sentence)) continue;
-    if (!/\b(?:visa|h-?1b|work(?:ing)? (?:authorization|authorisation|permit)|immigration|employment authorization)\b/i.test(sentence)) continue;
+    if (!hasEmploymentContext(sentence)) continue;
     // Postings often lack punctuation, so a "sentence" can run for paragraphs. Centre the
     // quote on the sponsorship wording, or it cites text that shows none of the evidence.
     const quote = quoteAround(sentence, /\bsponsor/i);

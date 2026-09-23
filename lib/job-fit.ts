@@ -1,3 +1,4 @@
+import { sponsorshipFromPosting } from "@/lib/sponsorship-text";
 import type { CandidateProfile, EligibilityStatus } from "@/lib/types";
 import { normalizeText, parseList } from "@/lib/utils";
 
@@ -348,10 +349,11 @@ export function assessJobEligibility(
     filterReasons.push(`The posting is ${postingAge} days old, beyond the ${preferences.maximumAgeDays}-day limit.`);
   }
 
-  if (
-    profile.sponsorship_required
-    && /(no sponsorship|unable to sponsor|cannot sponsor|without sponsorship|not sponsor)/i.test(job.description)
-  ) {
+  // Read the posting's stated policy rather than matching a few phrasings: the older
+  // pattern missed "unable to provide visa sponsorship" and "sponsorship is not available",
+  // which left roles that plainly rule you out sitting in the eligible list.
+  const sponsorship = sponsorshipFromPosting(job.description);
+  if (profile.sponsorship_required && sponsorship?.verdict === "us_work_authorization_required") {
     filterReasons.push("The posting says sponsorship is unavailable.");
   }
 
