@@ -50,12 +50,21 @@ interface ExtractedDescription {
   structured: boolean;
 }
 
-function jobPostingDescription(html: string): ExtractedDescription {
-  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+/** Flatten a JSON-LD document into its nodes: some sites wrap the posting in @graph. */
+function jsonLdNodes(parsed: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(parsed)) return parsed.flatMap(jsonLdNodes);
+  if (!parsed || typeof parsed !== "object") return [];
+  const node = parsed as Record<string, unknown>;
+  const graph = node["@graph"];
+  return graph ? [node, ...jsonLdNodes(graph)] : [node];
+}
+
+export function jobPostingDescription(html: string): ExtractedDescription {
+  // BuiltIn serves type="application/ld&#x2B;json", so the "+" has to tolerate entities.
+  for (const match of html.matchAll(/<script[^>]+type=["']application\/ld(?:\+|&#x2b;|&#43;)json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
-      const parsed = JSON.parse(decodeHtml(match[1])) as Record<string, unknown> | Array<Record<string, unknown>>;
-      const candidates = Array.isArray(parsed) ? parsed : [parsed];
-      const posting = candidates.find((candidate) => candidate["@type"] === "JobPosting");
+      const posting = jsonLdNodes(JSON.parse(decodeHtml(match[1])))
+        .find((candidate) => candidate["@type"] === "JobPosting");
       if (posting && typeof posting.description === "string") {
         return { text: cleanDescriptionText(decodeHtml(posting.description)), structured: true };
       }
