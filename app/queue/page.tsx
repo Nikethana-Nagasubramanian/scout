@@ -73,14 +73,16 @@ function ResumeActions({ resume }: { resume: QueueRow }) {
 
 function CoverLetterRow({ resume }: { resume: QueueRow }) {
   if (!resume.application_id || !resume.has_cover_letter) {
+    // Already queued without a letter means the user skipped it, not that it is missing.
+    const skipped = resume.application_status === "ready_to_apply";
     return (
       <div className="queue-artifact">
         <div className="queue-artifact-label">
           <strong>Cover letter</strong>
-          <span>Not drafted yet</span>
+          <span>{skipped ? "Skipped, optional" : "Not drafted yet"}</span>
         </div>
         <div className="queue-artifact-actions">
-          <Link className="queue-utility" href={`/jobs/${resume.job_id}?tab=cover-letter`}>Write one</Link>
+          <Link className="queue-utility" href={`/jobs/${resume.job_id}?tab=cover-letter`}>{skipped ? "Add one" : "Write one"}</Link>
         </div>
       </div>
     );

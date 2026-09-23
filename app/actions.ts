@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createHash } from "node:crypto";
+import { coverLetterQueueDecision } from "@/lib/application-workflow";
 import { db, setSetting, syncSearchSourcesToProfile } from "@/lib/database";
 import { DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
 import { addBoardFromInput, clearEligibilityOverrides, discoverOfficialBoardForJob, runCollection, scoreAllJobs, syncRunEligibility } from "@/lib/collector";
@@ -421,7 +422,8 @@ export async function approveCoverLetterAndQueueAction(formData: FormData): Prom
   const content = text(formData, "cover_letter_content")
     .replace(/\u2014/g, "-")
     .replace(/\u2013/g, "-");
-  if (!Number.isFinite(applicationId) || content.length < 80 || content.length > 6_000) return;
+  const { allowed, skipped } = coverLetterQueueDecision(content);
+  if (!Number.isFinite(applicationId) || !allowed) return;
   const application = db.prepare(`
     SELECT applications.id, applications.job_id, jobs.title AS job_title, jobs.company AS job_company
     FROM applications
@@ -430,16 +432,21 @@ export async function approveCoverLetterAndQueueAction(formData: FormData): Prom
     WHERE applications.id = ? AND resume_versions.status = 'approved'
   `).get(applicationId) as { id: number; job_id: number; job_title: string; job_company: string } | undefined;
   if (!application) return;
-  db.prepare(`
-    INSERT INTO cover_letters (application_id, content, generation_method, evidence_json, status)
-    VALUES (?, ?, 'Written manually', '{}', 'approved')
-    ON CONFLICT(application_id) DO UPDATE SET
-      content = excluded.content,
-      status = 'approved',
-      updated_at = CURRENT_TIMESTAMP
-  `).run(applicationId, content);
+  if (!skipped) {
+    db.prepare(`
+      INSERT INTO cover_letters (application_id, content, generation_method, evidence_json, status)
+      VALUES (?, ?, 'Written manually', '{}', 'approved')
+      ON CONFLICT(application_id) DO UPDATE SET
+        content = excluded.content,
+        status = 'approved',
+        updated_at = CURRENT_TIMESTAMP
+    `).run(applicationId, content);
+  }
   db.prepare("UPDATE applications SET status = 'ready_to_apply', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(applicationId);
-  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', 'Cover letter approved and application queued.')").run(applicationId);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'ready_to_apply', ?)").run(
+    applicationId,
+    skipped ? "Queued without a cover letter." : "Cover letter approved and application queued.",
+  );
   revalidatePath(`/jobs/${application.job_id}`);
   revalidatePath("/queue");
   revalidatePath("/applications");

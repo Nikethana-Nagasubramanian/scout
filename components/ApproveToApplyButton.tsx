@@ -7,15 +7,17 @@ export function ApproveToApplyButton({
   children,
   className = "button",
   disabled = false,
+  pendingLabel = "Approving...",
 }: {
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  pendingLabel?: string;
 }) {
   const { pending } = useFormStatus();
   return (
     <button className={className} type="submit" disabled={disabled || pending} aria-busy={pending}>
-      {pending ? <><Spinner /> Approving...</> : children}
+      {pending ? <><Spinner /> {pendingLabel}</> : children}
     </button>
   );
 }

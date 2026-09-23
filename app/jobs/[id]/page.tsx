@@ -151,7 +151,10 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
               ) : workflowStage === "cover_letter" ? (
                 <form action={approveCoverLetterAndQueueAction} id={coverLetterApprovalFormId}>
                   <input type="hidden" name="application_id" value={application?.id || ""} />
-                  <ApproveToApplyButton disabled={!application?.cover_letter_content}>Approve to apply</ApproveToApplyButton>
+                  {/* No draft is a valid choice, so this queues the application without one. */}
+                  <ApproveToApplyButton pendingLabel={application?.cover_letter_content ? "Approving..." : "Queueing..."}>
+                    {application?.cover_letter_content ? "Approve to apply" : "Apply without cover letter"}
+                  </ApproveToApplyButton>
                 </form>
               ) : job.apply_url ? (
                 <a className="button" href={job.apply_url} target="_blank" rel="noreferrer">Open application</a>
@@ -162,6 +165,13 @@ export default async function JobDetailPage({ params, searchParams }: JobPagePro
           ) : tab === "resume" && resumeApproved ? (
             <>
               <a className="button secondary" href={`/api/resumes/${latestResume.id}/pdf`} download>Download Resume PDF</a>
+              {/* The cover letter is optional, so queueing is reachable without opening that tab. */}
+              {application && workflowStage === "cover_letter" ? (
+                <form action={approveCoverLetterAndQueueAction}>
+                  <input type="hidden" name="application_id" value={application.id} />
+                  <ApproveToApplyButton className="button secondary" pendingLabel="Queueing...">Skip cover letter</ApproveToApplyButton>
+                </form>
+              ) : null}
               <Link className="button" href={`/jobs/${job.id}?tab=cover-letter`}>Generate Cover Letter</Link>
             </>
           ) : workflowStage === "submitted" ? (
