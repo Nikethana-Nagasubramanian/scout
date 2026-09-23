@@ -691,8 +691,7 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   .job-drawer-footer { flex-wrap: wrap; padding: 12px 16px; }
 }
 
-/* Visa label, read straight from the posting */
-.jobs-result-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+/* Visa label, read straight from the posting. Sits with the other status in column two. */
 .visa-chip {
   flex: 0 0 auto;
   padding: 2px 8px;
@@ -839,10 +838,11 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .jobs-result-primary { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
 .jobs-result-identity { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .jobs-result-identity > strong,
-.jobs-result-identity > .jobs-result-title { overflow: hidden; color: #000; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 16px; font-weight: 500; line-height: 20.8px; text-overflow: ellipsis; white-space: nowrap; }
-.jobs-result-identity > .jobs-result-title { width: fit-content; max-width: 100%; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
-.jobs-result-identity > .jobs-result-title:hover { text-decoration: underline; text-underline-offset: 3px; }
-.jobs-result-identity > .jobs-result-title:focus-visible { outline: 2px solid #515b41; outline-offset: 2px; }
+.jobs-result-identity .jobs-result-title { overflow: hidden; color: #000; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 16px; font-weight: 500; line-height: 20.8px; text-overflow: ellipsis; white-space: nowrap; }
+/* Selector stays independent of nesting: the title moved inside a wrapper once already. */
+.jobs-result-identity .jobs-result-title { display: block; width: fit-content; max-width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font: inherit; text-align: left; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.jobs-result-identity .jobs-result-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.jobs-result-identity .jobs-result-title:focus-visible { outline: 2px solid #515b41; outline-offset: 2px; }
 .jobs-result-identity > span { display: flex; align-items: center; gap: 10px; color: #686868; font-family: "Geist Variable", ui-sans-serif, sans-serif; font-size: 14px; line-height: 18.2px; }
 .jobs-result-identity i { width: 3px; height: 3px; background: center / 3px 3px no-repeat url('/assets/jobs-meta-dot.svg'); }
 .jobs-result-match { display: flex; align-items: center; gap: 12px; }

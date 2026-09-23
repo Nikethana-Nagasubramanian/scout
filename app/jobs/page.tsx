@@ -598,19 +598,17 @@ export default async function JobsPage({ searchParams }: SearchProps) {
             return <article className={`jobs-result-row${finding ? " has-finding" : ""}`} key={job.id}>
               <div className="jobs-result-primary">
                 <div className="jobs-result-identity">
-                  <div className="jobs-result-title-row">
-                    <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
-                    {job.sponsorship_status === "sponsors" ? (
-                      <span className="visa-chip sponsors" title="The posting says visa sponsorship is available">Sponsors visas</span>
-                    ) : job.sponsorship_status === "no_sponsorship" ? (
-                      <span className="visa-chip none" title="The posting says visa sponsorship is not available">No sponsorship</span>
-                    ) : null}
-                  </div>
+                  <JobTitleButton job={{ id: job.id, title: job.title, company: job.company, location: job.location || "Not specified" }} />
                   <span>{job.company}<i aria-hidden="true" />{job.location || "Not specified"}</span>
                 </div>
                 <div className="jobs-result-match"><strong>{job.score}%</strong><span>Profile match</span></div>
               </div>
               <div className="jobs-result-reason">
+                {job.sponsorship_status === "sponsors" ? (
+                  <span className="visa-chip sponsors" title="The posting says visa sponsorship is available">Sponsors visas</span>
+                ) : job.sponsorship_status === "no_sponsorship" ? (
+                  <span className="visa-chip none" title="The posting says visa sponsorship is not available">No sponsorship</span>
+                ) : null}
                 {isApplied ? (
                   <StatusPill status="applied" />
                 ) : isDuplicate ? (
