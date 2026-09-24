@@ -14,6 +14,7 @@
     "rescore": "tsx scripts/rescore.ts",
     "research:eligibility": "tsx scripts/research-eligibility.ts",
     "export:queue": "tsx scripts/export-queue.ts",
+    "repair:queue": "tsx scripts/repair-queue-state.ts",
     "collect:gmail": "tsx scripts/collect.ts gmail_manual",
     "scheduler:tick": "tsx scripts/scheduler-tick.ts",
     "scheduler:install": "tsx scripts/install-scheduler.ts",

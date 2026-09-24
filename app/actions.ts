@@ -410,6 +410,37 @@ export async function generateResumeAction(formData: FormData): Promise<void> {
   redirect(`/jobs/${jobId}?tab=resume`);
 }
 
+/**
+ * Rejecting a resume takes the application out of the apply queue.
+ *
+ * Without this an application sits at 'ready_to_apply' with a resume the user threw out,
+ * and anything reading that status - the export, the queue API, an external applier -
+ * hands out documents that were rejected. Only the latest version counts: rejecting an
+ * older version when a newer one stands says nothing about the application.
+ */
+function demoteApplicationForRejectedResume(resumeId: number): void {
+  const resume = db.prepare("SELECT job_id FROM resume_versions WHERE id = ?").get(resumeId) as
+    { job_id: number } | undefined;
+  if (!resume) return;
+
+  const latest = db.prepare(`
+    SELECT id FROM resume_versions WHERE job_id = ?
+    ORDER BY created_at DESC, id DESC LIMIT 1
+  `).get(resume.job_id) as { id: number } | undefined;
+  if (latest?.id !== resumeId) return;
+
+  // Only pull back an application still waiting to be sent. One already applied to, or
+  // further along, is history and must not be rewritten.
+  const application = db.prepare("SELECT id, status FROM applications WHERE job_id = ?").get(resume.job_id) as
+    { id: number; status: string } | undefined;
+  if (!application || application.status !== "ready_to_apply") return;
+
+  db.prepare("UPDATE applications SET status = 'preparing', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run(application.id);
+  db.prepare("INSERT INTO application_events (application_id, status, note) VALUES (?, 'preparing', ?)")
+    .run(application.id, "Returned to preparation because the resume was rejected.");
+}
+
 export async function updateResumeStatusAction(formData: FormData): Promise<void> {
   const status = text(formData, "status");
   if (!["approved", "rejected", "draft"].includes(status)) return;
@@ -420,6 +451,7 @@ export async function updateResumeStatusAction(formData: FormData): Promise<void
     id,
   );
   if (status === "approved") ensurePreparingApplicationForResume(id);
+  if (status === "rejected") demoteApplicationForRejectedResume(id);
   revalidatePath("/queue");
   revalidatePath("/applications");
   revalidatePath(`/resumes/${id}`);
