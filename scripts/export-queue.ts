@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateCoverLetterPdf } from "@/lib/cover-letter";
 import { db } from "@/lib/database";
+import { READY_TO_APPLY_QUERY } from "@/lib/ready-to-apply";
 import { generatePdf } from "@/lib/resume";
 import { coverLetterPdfFilename, resumePdfFilename } from "@/lib/resume-filename";
 import { resumeSkillCategories } from "@/lib/resume-skills";
@@ -59,19 +60,7 @@ async function main(): Promise<void> {
     .filter(Boolean)
     .join(" | ");
 
-  const rows = db.prepare(`
-    SELECT applications.id AS application_id, jobs.id AS job_id,
-      jobs.company, jobs.title, jobs.location, jobs.apply_url, jobs.canonical_url, jobs.description,
-      resume_versions.id AS resume_id, resume_versions.content_json,
-      cover_letters.content AS letter_content, cover_letters.updated_at AS letter_updated_at,
-      cover_letters.status AS letter_status
-    FROM applications
-    JOIN jobs ON jobs.id = applications.job_id
-    LEFT JOIN resume_versions ON resume_versions.id = applications.resume_version_id
-    LEFT JOIN cover_letters ON cover_letters.application_id = applications.id
-    WHERE applications.status = 'ready_to_apply'
-    ORDER BY applications.id
-  `).all() as QueueRow[];
+  const rows = db.prepare(READY_TO_APPLY_QUERY).all() as QueueRow[];
 
   if (!rows.length) {
     console.log("Nothing is ready to apply.");
