@@ -25,6 +25,7 @@ import {
   recordQueryRun,
   searchExa,
 } from "@/lib/exa-discovery";
+import { resolveBoardName } from "@/lib/board-naming";
 import { reconcileDuplicateJobs } from "@/lib/job-deduplication";
 import {
   assessJobEligibility,
@@ -703,7 +704,11 @@ function persistDetectedBoard(
       discovered_via_name, discovered_via_url
     ) VALUES (?, ?, ?, 1, 1, ?, ?, ?)
   `).run(
-    company || board.identifier,
+    // The identifier comes from the board's own URL; the company might be whoever linked
+    // to it, so a name another board of this type already holds is rejected.
+    resolveBoardName(company, board.identifier, db.prepare(
+      "SELECT identifier, name FROM job_sources WHERE source_type = ?",
+    ).all(board.sourceType) as Array<{ identifier: string; name: string }>),
     board.sourceType,
     board.identifier,
     board.evidenceUrl,
