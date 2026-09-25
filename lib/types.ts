@@ -215,6 +215,8 @@ export interface ScoreBreakdown {
   recency: number;
   compensation: number;
   total: number;
+  /** True when the posting was too short to judge, so a low score means unknown, not bad. */
+  unreadableDescription?: boolean;
   eligibilityStatus: EligibilityStatus;
   hardFilterPass: boolean;
   hardFilterReasons: string[];

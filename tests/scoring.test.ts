@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreJob, scorePostingConfidence } from "@/lib/scoring";
+import { buildMatchSummary, scoreJob, scorePostingConfidence } from "@/lib/scoring";
 import { assessJobEligibility, citizenshipRequirement, classifyRoleFamily, digitalDesignSignalCount, jobSearchTitles, unrequestedLeadershipWord } from "@/lib/job-fit";
 import type { CandidateProfile, Job } from "@/lib/types";
 
@@ -87,11 +87,56 @@ describe("scoreJob", () => {
     expect(result.skills).toBe(26);
   });
 
-  it("uses a neutral requirement score when a posting provides no specific requirements", () => {
-    const result = scoreJob(job({ description: "Join our team and make a meaningful impact." }), profile);
+  // A real posting with no listed requirements. Deliberately long and free of any word in
+  // the requirement catalog, so the neutral score is being tested and not keyword matching.
+  const requirementFreePosting = [
+    "We are a small studio in the Midwest and we have been at this for about nine years.",
+    "The people who do well here tend to be curious, patient, and happy to sit with a hard",
+    "problem for a while before reaching for an answer. Most of our work arrives untidy and",
+    "leaves in better shape. You would spend your days close to the people who use what we",
+    "make, and close to the people who build it. We keep meetings few and afternoons quiet.",
+    "We pay well, we take August slowly, and nobody here is measured by hours at a desk.",
+    "If any of that sounds like the way you would rather work, we would like to hear from you.",
+  ].join(" ");
+
+  it("uses a neutral requirement score when a real posting lists no specific requirements", () => {
+    const result = scoreJob(job({ description: requirementFreePosting }), profile);
     expect(result.skills).toBe(18);
+    expect(result.unreadableDescription).toBe(false);
     expect(result.matchingSkills).toEqual([]);
     expect(result.missingSkills).toEqual([]);
+  });
+
+  it("does not credit requirement coverage to a posting it could not read", () => {
+    // A Gmail alert snippet is not evidence of a good match, and used to pay out the same
+    // neutral coverage score as a real posting that simply lists no requirements.
+    const unreadable = scoreJob(job({ description: "Seen in a newsletter. Apply soon." }), profile);
+    expect(unreadable.unreadableDescription).toBe(true);
+    expect(unreadable.skills).toBe(6);
+  });
+
+  it("scores seniority from the title even when the posting is unreadable", () => {
+    // The title is real evidence; only the absence of any statement should go uncredited.
+    expect(scoreJob(job({ description: "Seen in a newsletter." }), profile).seniority).toBe(15);
+    expect(scoreJob(job({ title: "Designer", description: "Seen in a newsletter." }), profile).seniority).toBe(3);
+  });
+
+  it("keeps an unreadable posting out of the promising band", () => {
+    // Title, location, recency and salary are all knowable without the posting, and used
+    // to add up to a top-of-list score for a job Scout knew nothing about.
+    const unreadable = scoreJob(job({ description: "Seen in a newsletter. Apply soon." }), profile);
+    expect(unreadable.total).toBeLessThan(65);
+  });
+
+  it("ranks a posting it actually read above one it could not", () => {
+    const readAndMatched = scoreJob(job(), profile);
+    const unreadable = scoreJob(job({ description: "Seen in a newsletter. Apply soon." }), profile);
+    expect(readAndMatched.total).toBeGreaterThan(unreadable.total);
+  });
+
+  it("says a low score means unknown, not a poor match", () => {
+    const result = scoreJob(job({ description: "Seen in a newsletter. Apply soon." }), profile);
+    expect(buildMatchSummary(result)).toContain("could not read this posting");
   });
 
   it("explains a sponsorship hard filter", () => {

@@ -4,6 +4,20 @@ import { normalizeText, parseList } from "@/lib/utils";
 
 const seniorityTerms = ["intern", "junior", "associate", "mid", "senior", "staff", "principal", "lead", "manager", "director"];
 
+/**
+ * Below this there is no posting to judge, only a headline or an email snippet. Real
+ * postings run to thousands of characters; in Scout's corpus only a handful of aggregator
+ * and alert-derived rows land under it.
+ */
+const READABLE_DESCRIPTION_LENGTH = 400;
+
+/** Just under the 65 "promising match" band, so an unread posting never claims to be one. */
+const UNREADABLE_SCORE_CEILING = 64;
+
+export function hasReadableDescription(description: string): boolean {
+  return description.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().length >= READABLE_DESCRIPTION_LENGTH;
+}
+
 type Requirement = { label: string; aliases: string[] };
 
 // Detected in job descriptions only for design searches.
@@ -102,7 +116,12 @@ function requirementCoverage(job: Job, profile: CandidateProfile, profileSkills:
     catalogLabels.add(normalizeText(skill));
   }
 
-  if (!requirements.length) return { score: 18, matched: [], missing: [] };
+  if (!requirements.length) {
+    // A posting Scout could not read is not a posting with no requirements. Awarding the
+    // neutral score to both let unreadable jobs outrank ones that were read and matched
+    // only partly, which is how two unrelated roles kept tying near the top of the list.
+    return { score: hasReadableDescription(jobText) ? 18 : 6, matched: [], missing: [] };
+  }
 
   const matched = requirements
     .filter((requirement) => requirement.aliases.some((alias) => containsWholePhrase(candidateEvidence, alias)))
@@ -172,8 +191,16 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
           : "lead";
   const requestedSeniority = normalizeText(profile.target_seniority || experienceSeniority);
   const jobSeniority = seniorityTerms.find((term) => containsPhrase(`${job.title} ${job.description.slice(0, 300)}`, term)) || "";
+  // Short is not the same as uninformative: a one-line posting that names three tools has
+  // told Scout something. Evidence is missing only when a short posting also yielded no
+  // detectable requirement at all, which is the Gmail-alert and aggregator-excerpt case.
+  const noEvidence = !hasReadableDescription(job.description)
+    && matchingSkills.length === 0
+    && missingSkills.length === 0;
   const seniority = !requestedSeniority || !jobSeniority
-    ? 8
+    // Stating no seniority is not the same as stating a compatible one, so an evidence-free
+    // posting must not outscore one that states a mismatched level.
+    ? (noEvidence ? 3 : 8)
     : requestedSeniority.includes(jobSeniority) || jobSeniority.includes(requestedSeniority)
       ? 15
       : 4;
@@ -195,7 +222,11 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
       : 0;
 
   const rawTotal = title + skillsScore + seniority + location + recency + compensation;
-  const total = Math.max(0, Math.min(100, rawTotal));
+  // Title, location, recency and pay are all knowable without reading the posting, so an
+  // unreadable job can still collect most of the scale on signals that say nothing about
+  // fit. Cap it below the "promising" band: it may be a good role, but nothing here shows it.
+  const ceiling = noEvidence ? UNREADABLE_SCORE_CEILING : 100;
+  const total = Math.max(0, Math.min(ceiling, rawTotal));
 
   return {
     title,
@@ -205,6 +236,7 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
     recency,
     compensation,
     total,
+    unreadableDescription: noEvidence,
     eligibilityStatus: eligibility.status,
     hardFilterPass: hardFilterReasons.length === 0,
     hardFilterReasons,
@@ -216,6 +248,11 @@ export function scoreJob(job: Job, profile: CandidateProfile, fitPreferences?: J
 
 export function buildMatchSummary(score: ScoreBreakdown): string {
   if (!score.hardFilterPass) return score.hardFilterReasons.join(" ");
+  if (score.unreadableDescription) {
+    // The score is a statement about missing evidence, so say that before anything else.
+    const detail = score.verificationReasons.length ? ` ${score.verificationReasons.join(" ")}` : "";
+    return `Scout could not read this posting, so the score reflects how little is known, not a poor match.${detail}`;
+  }
   if (score.eligibilityStatus === "needs_verification") {
     return `Needs verification. ${score.verificationReasons.join(" ")}`;
   }
