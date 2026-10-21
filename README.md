@@ -206,6 +206,119 @@ pnpm scheduler:remove
 
 Run a collection by hand at any time with `pnpm collect`.
 
+## Experimental newsletter opportunities
+
+Open **Newsletters** in Scout's sidebar to enter a public issue link or paste the issue
+text. Scout discovers companies, creates an initial belief, then investigates **every
+detected company**, including funding-only mentions. It uses your saved Search profile
+and a conservative policy: relevant target market, product-market fit, growth, design
+capacity or explicit design hiring, company scale, and visa/role eligibility assessed
+separately. Edit **Your research preferences** in the app; preferences persist between runs.
+
+The agent chooses among `inspect_company_site`, `inspect_team`, `inspect_careers`,
+`inspect_product`, `search_recent_news`, and `stop`. It can discover relevant links,
+read a selected page, reassess evidence, revise its hypothesis and confidence, then
+choose another action or stop. Each action is one discovery search or one page read.
+The balanced default is **at most five actions per company**; the final assessment
+always sees the last action's evidence. Research stops sooner when the conclusion is
+well supported, contrary evidence makes the opportunity weak, or further research has
+little value.
+An unresolved company receives at least one site inspection/discovery attempt before
+stopping; explicitly irrelevant companies can stop from attributed newsletter evidence.
+Repeated targets are blocked. Two consecutive tool failures stop a company
+with unresolved uncertainties; an invalid model response gets at most one correction.
+
+Each company retains `company`, `known_facts` (exact source quotes with IDs),
+`current_hypothesis`, `confidence`, `unknowns`, and `research_history`. The record also
+includes criterion assessments, sources, an opportunity brief, and a `pursue`, `watch`,
+or `pass` verdict. History records the key uncertainty, chosen action, expected information
+gain, whether it was worth taking, the result/error, and the belief before and after.
+Confidence describes the conclusion, not a probability of hiring. Unknown design capacity
+is not evidence of no designers. Funding alone does not establish product-market fit;
+security/defense alone does not establish a citizenship restriction.
+
+Only supported opportunities enter the shortlist, up to five by default. Identity, target
+market, adoption/product-market fit and growth must be supported, together with a design
+gap or design hiring signal. An evidenced visa conflict or unsuitable company scale blocks pursuing. Eligibility
+unknowns remain visible and cap a positive conclusion at MEDIUM confidence. Confidence ranks the shortlist, followed by confirmed design gaps and suitable company scale. Watch/pass
+records are retained and displayed, even when the shortlist is empty.
+
+Start the app with `pnpm dev`, then visit `/newsletters`. The app launches a local Node
+worker and saves each research checkpoint in Git-ignored
+`data/generated/newsletters/runs/`. Progress and the latest run survive closing/reloading
+the page; one app investigation runs at a time. An interrupted worker is reported as failed,
+with any completed records retained. Download all company records as JSON from the app.
+Your profile needs strengths or a professional summary. Saved work authorization and
+sponsorship requirements are passed to the agent; unknown authorization stays unknown.
+
+In a terminal, run `pnpm newsletter` to be asked for a newsletter link or text-file path,
+or pass either directly:
+
+```bash
+pnpm newsletter "https://example.com/newsletter/issue"
+pnpm newsletter issue.txt --max-actions 5 --top 3
+pnpm newsletter issue.txt --criteria my-research-criteria.txt --profile my-profile.json
+```
+
+The CLI shares the same loop and saved app policy. `--max-actions` accepts 1 through 10.
+`--criteria` supplies your plain-text criteria for that run. `--profile` overrides the
+candidate context; optional `workAuthorization` and `sponsorshipRequired` supplement
+`targetRoles`, `strengths`, and `summary`. Progress goes to stderr. Checkpoints and final
+records go to `data/generated/newsletters/` or the `--output path.json` destination.
+Use `--provider anthropic|ollama` and `--model MODEL` to override the configured AI.
+
+Web search uses Exa when `EXA_API_KEY` is configured, respecting Scout's remaining local
+Exa budget. Otherwise the configured Claude provider uses its native web search, limited
+to one search per action. Claude web search must be enabled for the API account. An
+Ollama-only run without Exa can inspect observed issue/company links, but cannot discover
+new pages through search; unavailable actions are recorded honestly. Search excerpts are
+labeled separately from read pages. Native Claude searches retain source-cited excerpts,
+never uncited generated summaries. Provider calls incur the provider's usual API charges.
+
+Public HTML and plain-text input are supported, with DNS-checked, pinned public addresses,
+bounded downloads/redirects, and timeouts. Blocked, paywalled or JavaScript-only pages may
+require pasted issue text or leave research incomplete. Company page text is capped at
+18,000 characters and truncation is recorded. Quote checks prove textual presence, not
+truth or correct interpretation. Extraction and judgments still depend on the model;
+review decisive sources and the retained unknowns. Scout does not contact companies or
+send outreach.
+
+### Files and model instructions
+
+- `lib/newsletter-research-prompts.ts`: the agent's evidence, action-selection and stopping instructions.
+- `lib/newsletter-research-models.ts`: state, action schemas and default personal criteria.
+- `lib/newsletter-research.ts`: investigation loop, quote validation, budgets and conservative shortlist gates.
+- `lib/newsletter-research-evidence.ts`: stable source passages; the agent selects passage IDs and Scout copies their exact text.
+- `lib/newsletter-research-tools.ts`: public page reads and Exa/Claude search adapters.
+- `lib/newsletter-input.ts`: newsletter/page reader and observed links; do not weaken the public-address checks.
+- `lib/newsletter-research-store.ts` and `scripts/newsletter-worker.ts`: persisted app runs and background worker.
+- `lib/newsletter-profile.ts`: candidate fit and authorization context, without contact details or full resume.
+- `components/NewsletterWorkspace.tsx` and `app/newsletters/`: inputs, live progress, criteria and company records.
+- `scripts/newsletter.ts`: terminal prompting and checkpointed execution.
+- `lib/newsletter.ts`: company extraction and the original newsletter-only assessment prompts.
+
+### Evaluate the newsletter-only baseline
+
+`--initial-only` runs the original extraction/inference/ranking pipeline without company
+research. Its schemaVersion 1 output is distinct from the agent's schemaVersion 2 company
+records. The existing synthetic evaluation intentionally tests this baseline, so fictional
+companies do not trigger live searches:
+
+```bash
+pnpm newsletter examples/newsletter/issue.txt --initial-only --profile examples/newsletter/profile.json
+pnpm newsletter:eval examples/newsletter/evaluation.json --profile examples/newsletter/profile.json --output data/generated/newsletters/evaluation.json
+pnpm newsletter:eval examples/newsletter/evaluation.json --results data/generated/newsletters/evaluation.json
+pnpm exec vitest run tests/newsletter.test.ts tests/newsletter-research.test.ts
+```
+
+Evaluation labels are withheld from prompts. Reports include strict precision
+(interesting / returned), useful precision (interesting or maybe / returned), and missed
+interesting companies. Empty shortlists have null precision. This is a synthetic baseline,
+not a quality benchmark for the new research loop. Input is limited to 60,000 characters
+and extraction uses paragraph chunks; a mention spanning a chunk boundary can be missed.
+Validate the agent on real issues and review your own pursue/watch/pass judgments before
+relying on its prioritization.
+
 ## Data
 
 Your profile, jobs, resumes, and applications are stored locally in:

@@ -10,6 +10,7 @@ const groups = [
     links: [
       { href: "/sources", label: "Job sources" },
       { href: "/jobs", label: "Jobs" },
+      { href: "/newsletters", label: "Newsletters" },
       { href: "/queue", label: "Resume queue" },
       { href: "/applications", label: "Applications" },
       { href: "/contacts", label: "Contacts" },
