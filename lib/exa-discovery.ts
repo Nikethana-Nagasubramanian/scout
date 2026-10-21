@@ -147,7 +147,7 @@ interface ExaResponse {
 
 export async function searchExa(
   query: string,
-  options: { includeDomains?: string[]; now?: number; signal?: AbortSignal } = {},
+  options: { includeDomains?: string[]; now?: number; signal?: AbortSignal; recentOnly?: boolean; numResults?: number } = {},
 ): Promise<ExaSearchOutcome> {
   const apiKey = cleanEnvironmentValue(process.env.EXA_API_KEY);
   if (!apiKey) return { results: [], costDollars: 0, exhausted: false, error: "EXA_API_KEY is not set." };
@@ -156,8 +156,8 @@ export async function searchExa(
     // "auto" deliberately, never a deep search variant: deep costs more and buys nothing here.
     type: "auto",
     query,
-    numResults: RESULTS_PER_QUERY,
-    startPublishedDate: publishedAfterDate(options.now),
+    numResults: options.numResults ?? RESULTS_PER_QUERY,
+    ...(options.recentOnly === false ? {} : { startPublishedDate: publishedAfterDate(options.now) }),
     contents: { highlights: { maxCharacters: HIGHLIGHT_MAX_CHARACTERS } },
   };
   if (options.includeDomains?.length) body.includeDomains = options.includeDomains;

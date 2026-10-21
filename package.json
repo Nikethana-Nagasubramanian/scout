@@ -11,6 +11,8 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "collect": "tsx scripts/collect.ts",
+    "newsletter": "tsx scripts/newsletter.ts",
+    "newsletter:eval": "tsx scripts/newsletter.ts --evaluate",
     "rescore": "tsx scripts/rescore.ts",
     "research:eligibility": "tsx scripts/research-eligibility.ts",
     "export:queue": "tsx scripts/export-queue.ts",

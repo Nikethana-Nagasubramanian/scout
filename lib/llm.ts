@@ -98,6 +98,8 @@ export interface StructuredPromptOptions {
   maxTokens?: number;
   timeoutMs?: number;
   model?: string;
+  /** Lets bounded workflows avoid SDK retries outside their own call budget. */
+  maxRetries?: number;
 }
 
 /**
@@ -117,7 +119,7 @@ export async function runStructuredPrompt(prompt: string, options: StructuredPro
   if (provider === "anthropic") {
     const apiKey = anthropicApiKey();
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({ apiKey, ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }) });
     const response = await client.messages.create({
       model,
       max_tokens: maxTokens,

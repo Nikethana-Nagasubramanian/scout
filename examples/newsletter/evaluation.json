@@ -1,0 +1,24 @@
+{
+  "examples": [
+    { "company": "Acme AI", "text": "Acme AI raised an $8M seed round and launched workflow automation for legal teams with human approval before documents are sent.", "label": "interesting" },
+    { "company": "ReviewGrid", "text": "ReviewGrid launched an AI agent that proposes procurement actions and shows source documents for reviewers to approve each action.", "label": "interesting" },
+    { "company": "BridgeStack", "text": "BridgeStack added twelve integrations to its operations console and rebuilt onboarding for enterprise admins.", "label": "interesting" },
+    { "company": "TraceDesk", "text": "TraceDesk released a case-management dashboard with audit trails, role-based permissions, and an approval queue for compliance teams.", "label": "interesting" },
+    { "company": "FlowPilot", "text": "FlowPilot launched an AI workflow builder where operators review agent actions and inspect why each action was proposed.", "label": "interesting" },
+    { "company": "ChartWorks", "text": "ChartWorks expanded its analytics product to hospital operations teams, adding shared dashboards and configurable data views.", "label": "interesting" },
+    { "company": "PatternKit", "text": "PatternKit is consolidating four acquired SaaS products into one platform and announced a shared component library project.", "label": "interesting" },
+    { "company": "AccessLane", "text": "AccessLane rebuilt onboarding for enterprise customers to support team invitations, approval steps, and configurable permissions.", "label": "interesting" },
+    { "company": "Vector Labs", "text": "Vector Labs added enterprise customers and is expanding its engineering team to build shared analytics dashboards.", "label": "maybe" },
+    { "company": "CloudMetric", "text": "CloudMetric launched a reporting feature for small business customers, with no further product details.", "label": "maybe" },
+    { "company": "DevConnect", "text": "DevConnect added integrations with two developer tools to its API platform.", "label": "maybe" },
+    { "company": "MarketStep", "text": "MarketStep is expanding its ecommerce product into a new country and localizing checkout.", "label": "maybe" },
+    { "company": "TeamNote", "text": "TeamNote launched a mobile version of its team notes product.", "label": "maybe" },
+    { "company": "Plain Capital", "text": "Plain Capital raised a $3M round. No product details were included.", "label": "no" },
+    { "company": "Foo Corp", "text": "Foo Corp released an API patch fixing a typo in a response field.", "label": "no" },
+    { "company": "Mug House", "text": "This issue is sponsored by Mug House, which sells ceramic cups.", "label": "no" },
+    { "company": "Quiet Systems", "text": "Quiet Systems denied a rumor that it had raised funding and said no product announcement was planned.", "label": "no" },
+    { "company": "OfficeTree", "text": "OfficeTree opened a new office and announced a staff picnic.", "label": "no" },
+    { "company": "ComputeCore", "text": "ComputeCore is hiring three kernel engineers for low-level performance optimization. No user-facing product expansion was described.", "label": "no" },
+    { "company": "CafeCloud", "text": "CafeCloud congratulated its founder on a community award.", "label": "no" }
+  ]
+}
